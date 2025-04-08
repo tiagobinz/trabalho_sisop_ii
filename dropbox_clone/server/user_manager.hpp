@@ -13,16 +13,3 @@
  * Tiago Ehlers Binz
  * Victor de Souza Arnt
  */
-
-/*
- * server_main.cpp
- * Ponto de entrada da aplicação Servidor
- */
-
-#include "communication.hpp"
-
-int main() {
-    int port = 12345; // porta padrão
-    init_server(port);
-    return 0;
-}

@@ -14,15 +14,20 @@
  * Victor de Souza Arnt
  */
 
+#ifndef CLIENT_COMMUNICATION_HPP
+#define CLIENT_COMMUNICATION_HPP
+
+#include <string>
+
+struct Packet;
+
 /*
- * server_main.cpp
- * Ponto de entrada da aplicação Servidor
+ * client/communication.hpp
+ * Módulo de comunicação no lado do cliente
  */
 
-#include "communication.hpp"
+bool connect_to_server(const std::string& ip, int port);
+void send_packet(const Packet& pkt);
+Packet receive_packet();
 
-int main() {
-    int port = 12345; // porta padrão
-    init_server(port);
-    return 0;
-}
+#endif

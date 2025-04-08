@@ -14,15 +14,14 @@
  * Victor de Souza Arnt
  */
 
+#ifndef SERVER_COMMUNICATION_HPP
+#define SERVER_COMMUNICATION_HPP
+
 /*
- * server_main.cpp
- * Ponto de entrada da aplicação Servidor
+ * server/communication.hpp
+ * Módulo de comunicação no lado do servidor
  */
 
-#include "communication.hpp"
+void init_server(int port);
 
-int main() {
-    int port = 12345; // porta padrão
-    init_server(port);
-    return 0;
-}
+#endif

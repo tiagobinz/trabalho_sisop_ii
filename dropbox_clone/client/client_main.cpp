@@ -16,6 +16,8 @@
 
 #include <iostream>
 #include <string>
+#include "communication.hpp"
+#include "../common/packet.hpp"
 
 /*
  * client_main.cpp
@@ -44,6 +46,23 @@ int main(int argc, char* argv[]) {
     std::cout << "username = " << username << std::endl;
     std::cout << "server_ip = " << server_ip << std::endl;
     std::cout << "port = " << port << std::endl;
+
+    // Conexão com servidor
+    if (!connect_to_server(server_ip, port)) {
+        std::cerr << "Erro ao conectar com o servidor.\n";
+        return 1;
+    }
+    std::cout << "Conexão com servidor bem-sucedida.\n";
+
+    // Envia pacote de login
+    Packet login_pkt = make_packet(CMD, 0, 0, username.size(), username);
+    send_packet(login_pkt);
+    std::cout << "Login enviado: " << username << "\n";
+
+    // Espera resposta
+    Packet response = receive_packet();
+    std::string response_msg(response._payload, response.length);
+    std::cout << "Servidor respondeu: " << response_msg << "\n";
 
     return 0;
 }
