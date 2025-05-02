@@ -13,3 +13,19 @@
  * Tiago Ehlers Binz
  * Victor de Souza Arnt
  */
+
+#ifndef SYNC_MANAGER_HPP
+#define SYNC_MANAGER_HPP
+
+#include <string>
+
+/*
+ * sync_manager.hpp
+ * Responsável por manter a pasta sync_dir sincronizada com o Servidor
+ */
+
+bool get_sync_dir(const std::string& username);
+
+const std::string& get_client_sync_dir_path();
+
+#endif

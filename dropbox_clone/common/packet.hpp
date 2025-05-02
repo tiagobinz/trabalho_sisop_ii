@@ -32,11 +32,11 @@
  */
 
 typedef struct Packet {
-    uint16_t type;        // Tipo do pacote (CMD | DATA)
-    uint16_t seqn;        // Número de sequência
-    uint32_t total_size;  // Tamanho total do arquivo em bytes
-    uint16_t length;      // Comprimento do payload
-    char _payload[PAYLOAD_SIZE];  // Dados
+    uint16_t type;                  // Tipo do pacote (CMD | DATA)
+    uint16_t seqn;                  // Número de sequência
+    uint32_t total_size;            // Tamanho total do arquivo em bytes
+    uint16_t length;                // Comprimento do payload
+    char _payload[PAYLOAD_SIZE];    // Dados
 } Packet;
 
 Packet make_packet(uint16_t in_type, uint16_t in_seqn, uint32_t in_total_size, uint16_t in_length, std::string in_payload);

@@ -16,13 +16,30 @@
 
 #include <iostream>
 #include <string>
+#include <sstream>
+#include <fstream>
+#include <filesystem>
 #include "communication.hpp"
+#include "sync_manager.hpp"
 #include "../common/packet.hpp"
+#include "../common/utils.hpp"
 
 /*
  * client_main.cpp
  * Ponto de entrada da aplicação Cliente
  */
+
+// Loop principal do cliente, que recebe os comandos do usuário
+void command_loop(const std::string& username);
+
+// Solicita download e salva o arquivo
+void download_file(const std::string& filename);
+
+// Envia o conteúdo do arquivo informado para o servidor
+void upload_file(const std::string& full_path);
+
+// Alterado para true após a execução de "get_sync_dir"
+static bool sync_started = false;
 
 int main(int argc, char* argv[]) {
     /*
@@ -64,5 +81,155 @@ int main(int argc, char* argv[]) {
     std::string response_msg(response._payload, response.length);
     std::cout << "Servidor respondeu: " << response_msg << "\n";
 
+    // Começa a receber comandos do usuário
+    command_loop(username);
+
     return 0;
+}
+
+void command_loop(const std::string& username) {
+    std::string input;
+
+    std::cout << "[INFO] Cliente pronto. Digite um comando:\n";
+
+    while (true) {
+        // Espera entrada de um comando
+        std::getline(std::cin, input);
+        std::istringstream iss(input);
+
+        // Extrai o nome do comando
+        std::string command, arg;
+        iss >> command;
+
+        // Comando "exit"
+        if (command == "exit") {
+            std::cout << "Encerrando sessão...\n";
+            break;
+        }
+
+        // Comando "get_sync_dir"
+        else if (command == "get_sync_dir") {
+            sync_started = get_sync_dir(username);
+        }
+
+        // Outros comandos dependem de iniciar a sincronização antes
+        else if (sync_started) {
+            // Comando "list_client"
+            if (command == "list_client") {
+                list_files(get_client_sync_dir_path(), std::cout);
+            }
+
+            // Comando "upload"
+            else if (command == "upload") {
+                std::string path;
+                std::getline(iss, path);
+                path = path.substr(path.find_first_not_of(" \t"));
+            
+                if (path.empty()) {
+                    std::cout << "[ERRO] Especifique o caminho do arquivo para upload.\n";
+                    continue;
+                }
+            
+                upload_file(path);
+            }
+
+            // Comando "download"
+            else if (command == "download") {
+                std::string filename;
+                std::getline(iss, filename); // lê o resto da linha como um único argumento
+                filename = filename.substr(filename.find_first_not_of(" \t")); // remove espaços à esquerda
+            
+                if (filename.empty()) {
+                    std::cout << "[ERRO] Especifique o nome do arquivo para download.\n";
+                    continue;
+                }
+            
+                std::cout << "Vamos baixar " << filename << std::endl;
+                download_file(filename);
+            }
+
+            // Comando "delete"
+            else if (command == "delete") {
+                std::string filename;
+                std::getline(iss, filename);
+                filename = filename.substr(filename.find_first_not_of(" \t"));
+            
+                if (filename.empty()) {
+                    std::cout << "[ERRO] Especifique o nome do arquivo para deletar.\n";
+                    continue;
+                }
+            
+                delete_file(filename);
+            }
+
+            // Comando "list_server"
+            else if (command == "list_server") {
+                // Envia pacote perguntando os arquivos do servidor
+                Packet pkt = make_packet(CMD, 0, 0, 0, "LIST_SERVER");
+                send_packet(pkt);
+                
+                // Recebe e imprime o resultado
+                Packet response = receive_packet();
+                std::string result(response._payload, response.length);
+                std::cout << result;
+            }
+
+            // Comando inválido
+            else {
+                std::cout << "[ERRO] Comando não reconhecido.\n";
+            }
+        }
+        else {
+            std::cout << "[ERRO] Sincronização ainda não iniciada. Utilize o comando get_sync_dir.\n";
+        }
+    }
+}
+
+void download_file(const std::string& filename) {
+    std::string command = "DOWNLOAD\n" + filename;
+    Packet request = make_packet(CMD, 0, 0, command.size(), command);
+    send_packet(request);
+
+    Packet response = receive_packet();
+    std::string payload(response._payload, response.length);
+
+    if (payload.rfind("UPLOAD ", 0) == 0) {
+        size_t newline_pos = payload.find('\n');
+        if (newline_pos != std::string::npos) {
+            std::string header = payload.substr(0, newline_pos);
+            std::string content = payload.substr(newline_pos + 1);
+            std::string filename = header.substr(7); // após "UPLOAD "
+
+            std::ofstream file(filename, std::ios::binary);
+            file << content;
+            file.close();
+
+            std::cout << "[INFO] Arquivo '" << filename << "' salvo localmente.\n";
+        } else {
+            std::cerr << "[ERRO] Resposta mal formatada do servidor.\n";
+        }
+    } else {
+        std::cerr << "[ERRO] Arquivo não encontrado no servidor.\n";
+    }
+}
+
+void upload_file(const std::string& full_path) {
+    if (!std::filesystem::exists(full_path)) {
+        std::cerr << "[ERRO] Arquivo não encontrado: " << full_path << "\n";
+        return;
+    }
+
+    std::string filename = std::filesystem::path(full_path).filename().string();
+
+    std::ifstream file(full_path, std::ios::binary);
+    std::ostringstream ss;
+    ss << file.rdbuf();
+    std::string content = ss.str();
+
+    std::string full_command = "UPLOAD\n" + filename + "\n" + content;
+
+    Packet pkt = make_packet(CMD, 0, 0, full_command.size(), full_command);
+    send_packet(pkt);
+
+    std::cout << "[INFO] Arquivo '" << filename << "' enviado ao servidor.\n";
 }

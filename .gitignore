@@ -1,2 +1,4 @@
 /dropbox_clone/.vscode
 *.Identifier
+dropbox_clone/myServer
+dropbox_clone/myClient
