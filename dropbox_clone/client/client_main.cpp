@@ -79,7 +79,15 @@ int main(int argc, char* argv[]) {
     // Espera resposta
     Packet response = receive_packet();
     std::string response_msg(response._payload, response.length);
-    std::cout << "Servidor respondeu: " << response_msg << "\n";
+
+    // Checa se houve algum erro
+    if (response_msg.rfind("ERRO", 0) == 0) {
+        std::cerr << "[SERVIDOR] " << response_msg << "\n";
+        return 1; // Encerra execução com erro
+    }
+    else {
+        std::cout << "[SERVIDOR] " << response_msg << "\n";
+    }
 
     // Começa a receber comandos do usuário
     command_loop(username);
@@ -109,7 +117,16 @@ void command_loop(const std::string& username) {
 
         // Comando "get_sync_dir"
         else if (command == "get_sync_dir") {
+            // Create the sync_dir
             sync_started = get_sync_dir(username);
+
+            // Start the thread that receives updates from the server
+            start_receiver_thread();
+
+            // Request the existing files on the server
+            std::string command = "GET_ALL_FILES";
+            Packet request = make_packet(CMD, 0, 0, command.size(), command);
+            send_packet(request);
         }
 
         // Outros comandos dependem de iniciar a sincronização antes
@@ -189,9 +206,8 @@ void download_file(const std::string& filename) {
     std::string command = "DOWNLOAD\n" + filename;
     Packet request = make_packet(CMD, 0, 0, command.size(), command);
     send_packet(request);
-
-    Packet response = receive_packet();
-    std::string payload(response._payload, response.length);
+    
+    std::string payload = receive_full_payload();
 
     if (payload.rfind("UPLOAD ", 0) == 0) {
         size_t newline_pos = payload.find('\n');
@@ -227,9 +243,7 @@ void upload_file(const std::string& full_path) {
     std::string content = ss.str();
 
     std::string full_command = "UPLOAD\n" + filename + "\n" + content;
-
-    Packet pkt = make_packet(CMD, 0, 0, full_command.size(), full_command);
-    send_packet(pkt);
+    send_large_payload(CMD, full_command);
 
     std::cout << "[INFO] Arquivo '" << filename << "' enviado ao servidor.\n";
 }

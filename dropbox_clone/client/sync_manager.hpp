@@ -28,4 +28,8 @@ bool get_sync_dir(const std::string& username);
 
 const std::string& get_client_sync_dir_path();
 
+void apply_remote_update(const std::string& payload);
+
+void start_receiver_thread();
+
 #endif

@@ -10,6 +10,9 @@
 #include <thread>
 #include <vector>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -21,6 +24,10 @@ static std::string sync_dir_path;
 
 // Flag de controle da thread de monitoramento
 static bool running = true;
+
+static int inotify_fd;
+
+static int sync_dir_wd;
 
 // Função que lida com os eventos detectados pelo inotify
 void handle_event(struct inotify_event* event) {
@@ -36,9 +43,7 @@ void handle_event(struct inotify_event* event) {
         if (fs::exists(filepath)) {
             std::string content = read_file_content(filepath);
             std::string full_command = "UPLOAD\n" + filename + "\n" + content;
-
-            Packet pkt = make_packet(CMD, 0, 0, full_command.size(), full_command);
-            send_packet(pkt);
+            send_large_payload(CMD, full_command);
         }
     }
 
@@ -74,9 +79,7 @@ void handle_event(struct inotify_event* event) {
             if (fs::exists(filepath)) {
                 std::string content = read_file_content(filepath);
                 std::string full_command = "UPLOAD\n" + new_name + "\n" + content;
-
-                Packet up_pkt = make_packet(CMD, 0, 0, full_command.size(), full_command);
-                send_packet(up_pkt);
+                send_large_payload(CMD, full_command);
             }
 
             rename_cache.erase(it);
@@ -87,19 +90,19 @@ void handle_event(struct inotify_event* event) {
 // Função executada em thread separada para monitorar alterações no diretório sync_dir
 void monitor_sync_dir() {
     // Inicializa o inotify
-    int fd = inotify_init();
-    if (fd < 0) {
+    inotify_fd = inotify_init();
+    if (inotify_fd < 0) {
         perror("inotify_init");
         return;
     }
 
     // Adiciona um watch para os eventos de criação, modificação, deleção e escrita
-    int wd = inotify_add_watch(fd, sync_dir_path.c_str(),
+    sync_dir_wd = inotify_add_watch(inotify_fd, sync_dir_path.c_str(),
     IN_CREATE | IN_MODIFY | IN_DELETE | IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO);
 
-    if (wd < 0) {
+    if (sync_dir_wd < 0) {
         perror("inotify_add_watch");
-        close(fd);
+        close(inotify_fd);
         return;
     }
 
@@ -109,7 +112,7 @@ void monitor_sync_dir() {
 
     // Loop de leitura de eventos
     while (running) {
-        int length = read(fd, buffer.data(), BUF_LEN);
+        int length = read(inotify_fd, buffer.data(), BUF_LEN);
         if (length < 0) continue; // Ignora leituras com erro
 
         int i = 0;
@@ -121,8 +124,17 @@ void monitor_sync_dir() {
     }
 
     // Remove o watch e fecha o descritor
-    inotify_rm_watch(fd, wd);
-    close(fd);
+    inotify_rm_watch(inotify_fd, sync_dir_wd);
+    close(inotify_fd);
+}
+
+void pause_sync_monitoring() {
+    inotify_rm_watch(inotify_fd, sync_dir_wd);
+}
+
+void resume_sync_monitoring() {
+    sync_dir_wd = inotify_add_watch(inotify_fd, sync_dir_path.c_str(),
+        IN_CREATE | IN_MODIFY | IN_DELETE | IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO);
 }
 
 // Função que cria/identifica o diretório sync_dir e inicia o monitoramento com inotify
@@ -154,4 +166,51 @@ bool get_sync_dir(const std::string& username) {
 // Retorna o caminho atual do diretório de sincronização
 const std::string& get_client_sync_dir_path() {
     return sync_dir_path;
+}
+
+void apply_remote_update(const std::string& payload) {
+    if (payload.rfind("UPLOAD\n", 0) == 0) {
+        size_t pos1 = payload.find('\n', 7);
+        if (pos1 != std::string::npos) {
+            std::string filename = payload.substr(7, pos1 - 7);
+            std::string content = payload.substr(pos1 + 1);
+
+            pause_sync_monitoring(); // desativa inotify
+
+            std::string filepath = get_client_sync_dir_path() + "/" + filename;
+            std::ofstream file(filepath, std::ios::binary);
+            file << content;
+            file.close();
+
+            resume_sync_monitoring(); // reativa inotify
+
+            std::cout << "[SYNC] Arquivo atualizado por outro dispositivo: " << filename << "\n";
+        }
+    }
+    else if (payload.rfind("DELETE\n", 0) == 0) {
+        std::string filename = payload.substr(7);
+        std::string filepath = get_client_sync_dir_path() + "/" + filename;
+
+        pause_sync_monitoring(); // desativa inotify
+
+        if (std::filesystem::exists(filepath)) {
+            std::filesystem::remove(filepath);
+            std::cout << "[SYNC] Arquivo removido por outro dispositivo: " << filename << "\n";
+        }
+
+        resume_sync_monitoring(); // reativa inotify
+    }
+    else {
+        std::cout << "[DEBUG] Pacote recebido ignorado (não é comando reconhecido).\n";
+    }
+}
+
+void start_receiver_thread() {
+    std::thread([]() {
+        while (true) {
+            std::string payload = receive_full_payload();
+            if (payload.empty()) break; // desconexão
+            apply_remote_update(payload);
+        }
+    }).detach();
 }

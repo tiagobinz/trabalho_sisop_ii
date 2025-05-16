@@ -33,3 +33,5 @@ void delete_file(const std::string& filepath);
 
 // Extração do conteúdo de um arquivo no formato de uma string
 std::string read_file_content(const std::string& filepath);
+
+bool recv_exact(int socket, void* buffer, size_t length);

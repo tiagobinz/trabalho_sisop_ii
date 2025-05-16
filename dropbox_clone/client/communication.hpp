@@ -18,6 +18,7 @@
 #define CLIENT_COMMUNICATION_HPP
 
 #include <string>
+#include <cstdint>
 
 struct Packet;
 
@@ -29,5 +30,7 @@ struct Packet;
 bool connect_to_server(const std::string& ip, int port);
 void send_packet(const Packet& pkt);
 Packet receive_packet();
+void send_large_payload(uint16_t type, const std::string& payload);
+std::string receive_full_payload();
 
 #endif
