@@ -5,6 +5,8 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <iostream>
+#include <filesystem>
+#include <fstream>
 
 int client_socket;
 
@@ -123,4 +125,69 @@ std::string receive_full_payload() {
     }
 
     return result;
+}
+
+void upload_file(const std::string& full_path) {
+    if (!std::filesystem::exists(full_path)) {
+        std::cerr << "[ERRO] Arquivo não encontrado: " << full_path << "\n";
+        return;
+    }
+
+    std::string filename = std::filesystem::path(full_path).filename().string();
+
+    std::ifstream file(full_path, std::ios::binary);
+    std::ostringstream ss;
+    ss << file.rdbuf();
+    std::string content = ss.str();
+
+    auto ftime = std::filesystem::last_write_time(full_path);
+    auto ts = std::chrono::duration_cast<std::chrono::seconds>(
+        ftime.time_since_epoch()).count();
+
+    std::time_t t = ts;
+    std::cout << "last_write_time: " << std::put_time(std::localtime(&t), "%F %T") << "\n";
+
+    std::string full_command = "UPLOAD\n" + filename + "\n" + std::to_string(ts) + "\n" + content;
+    send_large_payload(CMD, full_command);
+
+    std::cout << "[DEBUG] Filename: " << filename << "\n";
+    std::cout << "[DEBUG] Timestamp: " << std::to_string(ts) << "\n";
+    std::cout << "[DEBUG] Content length: " << content.size() << "\n";
+
+    std::cout << "[INFO] Arquivo '" << filename << "' enviado ao servidor.\n";
+}
+
+void download_file(const std::string& filename) {
+    std::string command = "DOWNLOAD\n" + filename;
+    Packet request = make_packet(CMD, 0, 0, command.size(), command);
+    send_packet(request);
+    
+    std::string payload = receive_full_payload();
+
+    if (payload.rfind("UPLOAD ", 0) == 0) {
+        size_t newline_pos = payload.find('\n');
+        if (newline_pos != std::string::npos) {
+            std::string header = payload.substr(0, newline_pos);
+            std::string content = payload.substr(newline_pos + 1);
+            std::string filename = header.substr(7); // após "UPLOAD "
+
+            std::ofstream file(filename, std::ios::binary);
+            file << content;
+            file.close();
+
+            std::cout << "[INFO] Arquivo '" << filename << "' salvo localmente.\n";
+        } else {
+            std::cerr << "[ERRO] Resposta mal formatada do servidor.\n";
+        }
+    } else {
+        std::cerr << "[ERRO] Arquivo não encontrado no servidor.\n";
+    }
+}
+
+void delete_file_on_server(const std::string& filename)
+{
+    // Envia comando de deleção
+    std::string del_cmd = "DELETE\n" + filename;
+    Packet del_pkt = make_packet(CMD, 0, 0, del_cmd.size(), del_cmd);
+    send_packet(del_pkt);
 }

@@ -32,12 +32,6 @@
 // Loop principal do cliente, que recebe os comandos do usuário
 void command_loop(const std::string& username);
 
-// Solicita download e salva o arquivo
-void download_file(const std::string& filename);
-
-// Envia o conteúdo do arquivo informado para o servidor
-void upload_file(const std::string& full_path);
-
 // Alterado para true após a execução de "get_sync_dir"
 static bool sync_started = false;
 
@@ -117,13 +111,13 @@ void command_loop(const std::string& username) {
 
         // Comando "get_sync_dir"
         else if (command == "get_sync_dir") {
-            // Create the sync_dir
+            // Cria sync_dir
             sync_started = get_sync_dir(username);
 
-            // Start the thread that receives updates from the server
+            // Inicia a thread que recebe updates do servidor
             start_receiver_thread();
 
-            // Request the existing files on the server
+            // Pede os arquivos existentes do servidor
             std::string command = "GET_ALL_FILES";
             Packet request = make_packet(CMD, 0, 0, command.size(), command);
             send_packet(request);
@@ -200,50 +194,4 @@ void command_loop(const std::string& username) {
             std::cout << "[ERRO] Sincronização ainda não iniciada. Utilize o comando get_sync_dir.\n";
         }
     }
-}
-
-void download_file(const std::string& filename) {
-    std::string command = "DOWNLOAD\n" + filename;
-    Packet request = make_packet(CMD, 0, 0, command.size(), command);
-    send_packet(request);
-    
-    std::string payload = receive_full_payload();
-
-    if (payload.rfind("UPLOAD ", 0) == 0) {
-        size_t newline_pos = payload.find('\n');
-        if (newline_pos != std::string::npos) {
-            std::string header = payload.substr(0, newline_pos);
-            std::string content = payload.substr(newline_pos + 1);
-            std::string filename = header.substr(7); // após "UPLOAD "
-
-            std::ofstream file(filename, std::ios::binary);
-            file << content;
-            file.close();
-
-            std::cout << "[INFO] Arquivo '" << filename << "' salvo localmente.\n";
-        } else {
-            std::cerr << "[ERRO] Resposta mal formatada do servidor.\n";
-        }
-    } else {
-        std::cerr << "[ERRO] Arquivo não encontrado no servidor.\n";
-    }
-}
-
-void upload_file(const std::string& full_path) {
-    if (!std::filesystem::exists(full_path)) {
-        std::cerr << "[ERRO] Arquivo não encontrado: " << full_path << "\n";
-        return;
-    }
-
-    std::string filename = std::filesystem::path(full_path).filename().string();
-
-    std::ifstream file(full_path, std::ios::binary);
-    std::ostringstream ss;
-    ss << file.rdbuf();
-    std::string content = ss.str();
-
-    std::string full_command = "UPLOAD\n" + filename + "\n" + content;
-    send_large_payload(CMD, full_command);
-
-    std::cout << "[INFO] Arquivo '" << filename << "' enviado ao servidor.\n";
 }

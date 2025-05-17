@@ -33,4 +33,13 @@ Packet receive_packet();
 void send_large_payload(uint16_t type, const std::string& payload);
 std::string receive_full_payload();
 
+// Solicita download e salva o arquivo
+void download_file(const std::string& filename);
+
+// Envia o conteúdo do arquivo informado para o servidor
+void upload_file(const std::string& full_path);
+
+// Solicita que um arquivo seja deletado no servidor
+void delete_file_on_server(const std::string& filename);
+
 #endif

@@ -174,28 +174,68 @@ void handle_client(int client_socket) {
         // Trata comando UPLOAD
         else if (payload.rfind("UPLOAD\n", 0) == 0) {
             size_t pos1 = payload.find('\n', 7);
+            size_t pos2 = payload.find('\n', pos1 + 1);
             if (pos1 != std::string::npos) {
                 std::string filename = payload.substr(7, pos1 - 7);
-                std::string content = payload.substr(pos1 + 1);
+                std::string ts_str = payload.substr(pos1 + 1, pos2 - pos1 - 1);
+                std::string content = payload.substr(pos2 + 1);
+
+                std::cout << "[DEBUG] Filename: " << filename << "\n";
+                std::cout << "[DEBUG] Timestamp: " << ts_str << "\n";
+                std::cout << "[DEBUG] Content length: " << content.size() << "\n";
+
+                std::cout << "[DEBUG] content[0] = " << content[0] << "\n";
+
                 std::string filepath = user_dir + "/" + filename;
+                auto ts_remote = std::stoll(ts_str);
 
-                {
-                    std::lock_guard<std::mutex> lock(get_file_mutex(username, filename));
+                bool salvar = true;
 
-                    std::ofstream file(filepath, std::ios::binary);
-                    file << content;
-                    file.close();
+                // Verificar timestamp
+                if (std::filesystem::exists(filepath)) {
+                    auto local_ts = std::chrono::duration_cast<std::chrono::seconds>(
+                        std::filesystem::last_write_time(filepath).time_since_epoch()).count();
+                    salvar = ts_remote >= local_ts;
+
+                    std::cout << "[DEBUG] local_ts = " << local_ts << "\n";
                 }
 
-                std::cout << "[SYNC] Arquivo salvo no servidor: " << filename << "\n";
-
-                // Propagação de UPLOAD para outros dispositivos
-                std::string notification = "UPLOAD\n" + filename + "\n" + content;
+                if (salvar)
                 {
-                    std::lock_guard<std::mutex> lock(socket_mutex);
-                    for (int sock : user_sockets[username]) {
-                        if (sock != client_socket) { // não envia de volta para quem enviou
-                            send_large_payload(sock, CMD, notification);
+                    std::cout << "[SYNC] Começando a salvar o arquivo no servidor: " << filename << "\n";
+
+                    // Atualizar o arquivo no servidor
+                    {
+                        std::lock_guard<std::mutex> lock(get_file_mutex(username, filename));
+
+                        std::ofstream file(filepath, std::ios::binary);
+                        file << content;
+                        file.close();
+
+                        // Atualiza o timestamp
+                        auto new_time = std::filesystem::file_time_type(std::chrono::seconds(ts_remote));
+                        std::filesystem::last_write_time(filepath, new_time);
+
+                        // Converte para time_t
+                        auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                                        new_time - std::filesystem::file_time_type::clock::now()
+                                        + std::chrono::system_clock::now());
+
+                        std::time_t cftime = std::chrono::system_clock::to_time_t(sctp);
+
+                        std::cout << "last_write_time: " << std::put_time(std::localtime(&cftime), "%F %T") << "\n";
+                    }
+
+                    std::cout << "[SYNC] Arquivo salvo no servidor: " << filename << "\n";
+
+                    // Propagação de UPLOAD para outros dispositivos
+                    std::string notification = "UPLOAD\n" + filename + "\n" + ts_str + "\n" + content;
+                    {
+                        std::lock_guard<std::mutex> lock(socket_mutex);
+                        for (int sock : user_sockets[username]) {
+                            if (sock != client_socket) { // não envia de volta para quem enviou
+                                send_large_payload(sock, CMD, notification);
+                            }
                         }
                     }
                 }
@@ -243,8 +283,12 @@ void handle_client(int client_socket) {
                 ss << file.rdbuf();
                 std::string content = ss.str();
 
-                std::string full = "UPLOAD\n" + filename + "\n" + content;
-                send_large_payload(client_socket, CMD, full);
+                auto ftime = std::filesystem::last_write_time(entry.path());
+                auto ts = std::chrono::duration_cast<std::chrono::seconds>(
+                    ftime.time_since_epoch()).count();
+
+                std::string full_command = "UPLOAD\n" + filename + "\n" + std::to_string(ts) + "\n" + content;
+                send_large_payload(client_socket, CMD, full_command);
                 std::cout << "[SYNC] Enviado arquivo '" << filename << "' ao novo cliente\n";
             }
         }

@@ -40,20 +40,18 @@ void handle_event(struct inotify_event* event) {
     if (event->mask & IN_CLOSE_WRITE || event->mask & IN_CREATE) {
         std::cout << "[SYNC] Arquivo criado/modificado: " << filename << "\n";
 
+        // Espera 100ms antes de ler timestamp
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
         if (fs::exists(filepath)) {
-            std::string content = read_file_content(filepath);
-            std::string full_command = "UPLOAD\n" + filename + "\n" + content;
-            send_large_payload(CMD, full_command);
+            upload_file(filepath);
         }
     }
 
     // Evento de remoção de arquivo
     if (event->mask & IN_DELETE) {
         std::cout << "[SYNC] Arquivo deletado: " << filename << "\n";
-
-        std::string command = "DELETE\n" + filename;
-        Packet pkt = make_packet(CMD, 0, 0, command.size(), command);
-        send_packet(pkt);
+        delete_file_on_server(filename);
     }
 
     // Detecta início de renomeação
@@ -71,15 +69,11 @@ void handle_event(struct inotify_event* event) {
             std::cout << "[SYNC] Arquivo renomeado: " << old_name << " -> " << new_name << "\n";
 
             // Envia comando de deleção do nome antigo
-            std::string del_cmd = "DELETE\n" + old_name;
-            Packet del_pkt = make_packet(CMD, 0, 0, del_cmd.size(), del_cmd);
-            send_packet(del_pkt);
+            delete_file_on_server(old_name);
 
             // Envia o conteúdo do novo nome como upload
             if (fs::exists(filepath)) {
-                std::string content = read_file_content(filepath);
-                std::string full_command = "UPLOAD\n" + new_name + "\n" + content;
-                send_large_payload(CMD, full_command);
+                upload_file(filepath);
             }
 
             rename_cache.erase(it);
@@ -98,7 +92,7 @@ void monitor_sync_dir() {
 
     // Adiciona um watch para os eventos de criação, modificação, deleção e escrita
     sync_dir_wd = inotify_add_watch(inotify_fd, sync_dir_path.c_str(),
-    IN_CREATE | IN_MODIFY | IN_DELETE | IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO);
+    IN_CLOSE_WRITE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO);
 
     if (sync_dir_wd < 0) {
         perror("inotify_add_watch");
@@ -171,20 +165,44 @@ const std::string& get_client_sync_dir_path() {
 void apply_remote_update(const std::string& payload) {
     if (payload.rfind("UPLOAD\n", 0) == 0) {
         size_t pos1 = payload.find('\n', 7);
+        size_t pos2 = payload.find('\n', pos1 + 1);
         if (pos1 != std::string::npos) {
             std::string filename = payload.substr(7, pos1 - 7);
-            std::string content = payload.substr(pos1 + 1);
-
-            pause_sync_monitoring(); // desativa inotify
+            std::string ts_str = payload.substr(pos1 + 1, pos2 - pos1 - 1);
+            std::string content = payload.substr(pos2 + 1);
 
             std::string filepath = get_client_sync_dir_path() + "/" + filename;
-            std::ofstream file(filepath, std::ios::binary);
-            file << content;
-            file.close();
+            auto ts_remote = std::stoll(ts_str);
 
-            resume_sync_monitoring(); // reativa inotify
+            bool salvar = true;
 
-            std::cout << "[SYNC] Arquivo atualizado por outro dispositivo: " << filename << "\n";
+            // Verificar timestamp
+            if (std::filesystem::exists(filepath)) {
+                auto local_ts = std::chrono::duration_cast<std::chrono::seconds>(
+                    std::filesystem::last_write_time(filepath).time_since_epoch()).count();
+                salvar = ts_remote >= local_ts;
+
+                std::cout << "[DEBUG] local_ts = " << local_ts << "\n";
+            }
+
+            if (salvar)
+            {
+                pause_sync_monitoring(); // desativa inotify
+
+                // Escreve o arquivo
+                std::string filepath = get_client_sync_dir_path() + "/" + filename;
+                std::ofstream file(filepath, std::ios::binary);
+                file << content;
+                file.close();
+
+                // Atualiza o timestamp
+                auto new_time = std::filesystem::file_time_type(std::chrono::seconds(ts_remote));
+                std::filesystem::last_write_time(filepath, new_time);
+
+                resume_sync_monitoring(); // reativa inotify
+
+                std::cout << "[SYNC] Arquivo atualizado por outro dispositivo: " << filename << "\n";
+            }
         }
     }
     else if (payload.rfind("DELETE\n", 0) == 0) {
