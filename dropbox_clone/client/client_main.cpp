@@ -83,6 +83,11 @@ int main(int argc, char* argv[]) {
         std::cout << "[SERVIDOR] " << response_msg << "\n";
     }
 
+    // executa get_sync_dir sempre no inicio
+    sync_started = get_sync_dir(username);
+    
+    std::cout << "[INFO] Cliente pronto.\n";
+
     // Começa a receber comandos do usuário
     command_loop(username);
 
@@ -92,9 +97,10 @@ int main(int argc, char* argv[]) {
 void command_loop(const std::string& username) {
     std::string input;
 
-    std::cout << "[INFO] Cliente pronto. Digite um comando:\n";
-
     while (true) {
+
+        std::cout << "[INFO] Digite um comando:\n";
+
         // Espera entrada de um comando
         std::getline(std::cin, input);
         std::istringstream iss(input);

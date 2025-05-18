@@ -14,6 +14,9 @@ void list_files(const std::string& path, std::ostream& out) {
     if (!std::filesystem::exists(path)) {
         std::cerr << "[ERRO] Diretório de sincronização não existe: " << path << "\n";
         return;
+    } else if (std::filesystem::is_empty(path)) {
+        out << "Diretório de sincronização vazio.\n";
+        return;
     }
 
     out << std::left << std::setw(45) << "Arquivo"
