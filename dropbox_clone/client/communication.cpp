@@ -127,7 +127,7 @@ std::string receive_full_payload() {
     return result;
 }
 
-void upload_file(const std::string& full_path) {
+void upload_file(const std::string& full_path, const std::string& username) {
     if (!std::filesystem::exists(full_path)) {
         std::cerr << "[ERRO] Arquivo não encontrado: " << full_path << "\n";
         return;
@@ -155,6 +155,25 @@ void upload_file(const std::string& full_path) {
     std::cout << "[DEBUG] Content length: " << content.size() << "\n";
 
     std::cout << "[INFO] Arquivo '" << filename << "' enviado ao servidor.\n";
+
+    // Replica o arquivo para o diretório local do user, caso nele já não esteja
+    if (!username.empty()) {
+        std::string local_sync_dir = username + "_sync_dir";
+        std::string destination = local_sync_dir + "/" + filename;
+
+        if (!std::filesystem::equivalent(full_path, destination)) {
+            try {
+                std::filesystem::create_directories(local_sync_dir);
+                std::ofstream out(destination, std::ios::binary);
+                out << content;
+                out.close();
+                std::filesystem::last_write_time(destination, std::filesystem::file_time_type(std::chrono::seconds(ts)));
+                std::cout << "[INFO] Arquivo também salvo em '" << destination << "'\n";
+            } catch (const std::exception& e) {
+                std::cerr << "[ERRO] Falha ao salvar arquivo no diretório local de sincronização: " << e.what() << "\n";
+            }
+        }
+    }
 }
 
 void download_file(const std::string& filename) {

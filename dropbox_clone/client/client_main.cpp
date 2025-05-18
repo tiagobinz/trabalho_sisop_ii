@@ -147,7 +147,7 @@ void command_loop(const std::string& username) {
                     continue;
                 }
             
-                upload_file(path);
+                upload_file(path, username);
             }
 
             // Comando "download"

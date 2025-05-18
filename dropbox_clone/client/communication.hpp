@@ -37,7 +37,7 @@ std::string receive_full_payload();
 void download_file(const std::string& filename);
 
 // Envia o conteúdo do arquivo informado para o servidor
-void upload_file(const std::string& full_path);
+void upload_file(const std::string& full_path, const std::string& username = "");
 
 // Solicita que um arquivo seja deletado no servidor
 void delete_file_on_server(const std::string& filename);
