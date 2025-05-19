@@ -145,6 +145,12 @@ bool get_sync_dir(const std::string& username) {
     } else {
         output = true;
         std::cout << "[INFO] Diretório já existe: " << sync_dir_path << "\n";
+        start_receiver_thread();
+
+        // Pede os arquivos existentes do servidor
+        std::string command = "GET_ALL_FILES";
+        Packet request = make_packet(CMD, 0, 0, command.size(), command);
+        send_packet(request);
     }
 
     if (output == true)
