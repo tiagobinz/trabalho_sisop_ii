@@ -144,12 +144,12 @@ void handle_client(int client_socket) {
     
         // Trata comando DELETE
         else if (payload.rfind("DELETE\n", 0) == 0) {
-            std::string filename = payload.substr(7);
+            std::string filename = payload.substr(7); 
             std::string filepath = user_dir + "/" + filename;
 
             {
                 std::lock_guard<std::mutex> lock(get_file_mutex(username, filename));
-        
+                
                 if (std::filesystem::exists(filepath)) {
                     std::filesystem::remove(filepath);
                     std::cout << "[SYNC] Arquivo deletado no servidor: " << filename << "\n";

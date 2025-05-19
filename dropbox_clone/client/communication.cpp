@@ -158,7 +158,9 @@ void upload_file(const std::string& full_path, const std::string& username) {
 
     // Replica o arquivo para o diretório local do user, caso nele já não esteja
     if (!username.empty()) {
-        std::string local_sync_dir = username + "_sync_dir";
+        //std::string local_sync_dir = username + "_sync_dir";
+        std::string local_sync_dir =  "sync_dir";
+
         std::string destination = local_sync_dir + "/" + filename;
 
         if (!std::filesystem::equivalent(full_path, destination)) {
