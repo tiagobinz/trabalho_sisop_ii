@@ -175,7 +175,8 @@ void command_loop(const std::string& username) {
                     std::cout << "[ERRO] Especifique o nome do arquivo para deletar.\n";
                     continue;
                 }
-            
+                // Envia o comando de delete para o servidor referenciando o arquivo na pasta sync_dir de sincronização
+                filename=   "sync_dir/" + filename;
                 delete_file(filename);
             }
 
