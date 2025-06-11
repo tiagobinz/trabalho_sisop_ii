@@ -10,7 +10,7 @@
 
 int client_socket;
 
-bool connect_to_server(const std::string& ip, int port) {
+bool connect_to_server_TCP(const std::string& ip, int port) {
     // Criação do socket TCP
     client_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (client_socket < 0) {

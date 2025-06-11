@@ -1,6 +1,10 @@
 #include "communication.hpp"
+#include "service.hpp"
 #include "../common/packet.hpp"
 #include "../common/utils.hpp"
+
+#include <sys/socket.h>
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <unistd.h>
 #include <iostream>
@@ -321,33 +325,71 @@ void handle_client(int client_socket) {
     }
 }
 
-void init_server(int port) {
-    // Criação do socket TCP
-    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+void init_server(int port, ServerType t) {
 
-    // Define as configurações do endereço (porta e IP)
-    sockaddr_in address{};
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(port);
+    if (t == ServerType::PRIMARY) {
+        // Criação do socket TCP (aceitar clientes)
+        int server_fd = socket(AF_INET, SOCK_STREAM, 0);
 
-    // Associa o socket à porta especificada
-    bind(server_fd, (sockaddr*)&address, sizeof(address));
+        // Define as configurações do endereço (porta e IP)
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = INADDR_ANY;
+        address.sin_port = htons(port);
 
-    // Inicia o modo de escuta por conexões
-    listen(server_fd, 10);
-    std::cout << "[*] Servidor ouvindo na porta " << port << "...\n";
+        // Associa o socket à porta especificada
+        bind(server_fd, (sockaddr*)&address, sizeof(address));
 
-    // Loop principal que aceita conexões de clientes
-    while (true) {
-        sockaddr_in client_addr{};
-        socklen_t addrlen = sizeof(client_addr);
+        // Inicia o modo de escuta por conexões
+        listen(server_fd, 10);
+        std::cout << "[*] Servidor ouvindo na porta " << port << "...\n";
 
-        // Aceita nova conexão e cria um novo socket específico para o cliente
-        int client_socket = accept(server_fd, (sockaddr*)&client_addr, &addrlen);
+        // Cria uma nova thread para realizar Broadcast UDP e avisar aos backups o endereço primário
+        std::thread(multicast_primary_info, port).detach();
 
-        // Cria uma nova thread para tratar o cliente de forma concorrente
-        std::thread(handle_client, client_socket).detach();
+        // Loop principal que aceita conexões de clientes
+        while (true) {
+            sockaddr_in client_addr{};
+            socklen_t addrlen = sizeof(client_addr);
+
+            // Aceita nova conexão e cria um novo socket específico para o cliente
+            int client_socket = accept(server_fd, (sockaddr*)&client_addr, &addrlen);
+
+            // Cria uma nova thread para tratar o cliente de forma concorrente
+            std::thread(handle_client, client_socket).detach();
+        }
+
+    } else if (t == ServerType::BACKUP) {
+
+        std::string primary_ip = listen_for_primary_multicast(port);
+
+        // Criação do socket TCP (escutar server primário)
+        int backup_fd = socket(AF_INET, SOCK_STREAM, 0);
+
+        // Define as configurações com o servidor primário
+        sockaddr_in primary_addr{};
+        primary_addr.sin_family = AF_INET;
+        primary_addr.sin_port = htons(port);
+
+        // Converte o IP string para binário
+        if (inet_pton(AF_INET, primary_ip.c_str(), &primary_addr.sin_addr) <= 0) {
+            std::cerr << "[ERRO] inet_pton falhou. IP: " << primary_ip << " inválido? \n";
+            close(backup_fd);
+            return;
+        }
+
+        // Conecta ao primário
+        if (connect(backup_fd, (sockaddr*)&primary_addr, sizeof(primary_addr)) < 0) {
+            std::cerr << "[ERRO] Falha ao conectar-se ao servidor.\n";
+            close(backup_fd);
+            return;
+        }
+        std::cout << "[B] Conectado ao primário em " << primary_ip << ":" << port << "\n";
+    
+        // Loop principal que recebe replicas do principal
+        while (true) {
+            
+        }
     }
 }
 

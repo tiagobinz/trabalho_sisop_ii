@@ -14,26 +14,22 @@
  * Victor de Souza Arnt
  */
 
-#ifndef SERVER_COMMUNICATION_HPP
-#define SERVER_COMMUNICATION_HPP
+#ifndef SERVICE_HPP
+#define SERVICE_HPP
 
 #include <string>
-#include <cstdint>
 
 /*
- * server/communication.hpp
- * Módulo de comunicação no lado do servidor
+ * server/service.hpp
+ * Módulo de serviços no lado servidor para a replicação passiva
  */
 
- enum class ServerType {
-    PRIMARY,
-    BACKUP
- };
+#define MAX_SERVER_MULTICAST    15
 
+void multicast_primary_info(int multicast_port);
 
- 
-void init_server(int port, ServerType t);
+std::string listen_for_primary_multicast(int multicast_port);
 
-void send_large_payload(int socket, uint16_t type, const std::string& payload);
+std::string get_local_ip();
 
 #endif

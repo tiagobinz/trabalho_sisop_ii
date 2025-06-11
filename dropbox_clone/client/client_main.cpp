@@ -59,7 +59,7 @@ int main(int argc, char* argv[]) {
     std::cout << "port = " << port << std::endl;
 
     // Conexão com servidor
-    if (!connect_to_server(server_ip, port)) {
+    if (!connect_to_server_TCP(server_ip, port)) {
         std::cerr << "Erro ao conectar com o servidor.\n";
         return 1;
     }

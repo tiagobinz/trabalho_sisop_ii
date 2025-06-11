@@ -27,7 +27,7 @@ struct Packet;
  * Módulo de comunicação no lado do cliente
  */
 
-bool connect_to_server(const std::string& ip, int port);
+bool connect_to_server_TCP(const std::string& ip, int port);
 void send_packet(const Packet& pkt);
 Packet receive_packet();
 void send_large_payload(uint16_t type, const std::string& payload);
