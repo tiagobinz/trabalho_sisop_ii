@@ -19,6 +19,7 @@
 
 #include <string>
 #include <cstdint>
+#include <mutex>
 
 /*
  * server/communication.hpp
@@ -30,9 +31,12 @@
     BACKUP
  };
 
+std::mutex& get_file_mutex(const std::string& user, const std::string& filename);
+bool recv_exact(int socket, void* buffer, size_t length);
+std::string receive_full_payload(int client_socket);
+void handle_client(int client_socket);
 
- 
-void init_server(int port, ServerType t);
+int init_server(int port, ServerType t);
 
 void send_large_payload(int socket, uint16_t type, const std::string& payload);
 

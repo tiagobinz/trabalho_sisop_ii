@@ -20,6 +20,11 @@
  */
 
 #include <iostream>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <thread>
+
 #include "communication.hpp"
 
 int main(int argc, char* argv[]) {
@@ -32,22 +37,41 @@ int main(int argc, char* argv[]) {
 
     // Extração dos argumentos
     std::string server_type = argv[1];  // -p (primary), -b (backup)
+    
     ServerType t;
 
     if (server_type == "-p") {
         std::cout << "Iniciando servidor PRIMÁRIO na porta " << port << "\n";
         t = ServerType::PRIMARY;
-        init_server(port, t);
+        int server_fd = init_server(port, t);
+
+        // Loop principal que aceita conexões de clientes
+        while (true) {
+
+            sockaddr_in client_addr{};
+            socklen_t addrlen = sizeof(client_addr);
+
+            // Aceita nova conexão e cria um novo socket específico para o cliente
+            int client_socket = accept(server_fd, (sockaddr*)&client_addr, &addrlen);
+
+            // Cria uma nova thread para tratar o cliente de forma concorrente
+            std::thread(handle_client, client_socket).detach();
+        }
 
     } else if (server_type == "-b") {
         std::cout << "Iniciando servidor BACKUP na porta " << port << "\n";
         t = ServerType::BACKUP;
         init_server(port, t);
 
-       } else {
-           std::cerr << "Erro: tipo de servidor inválido. Use -p para primário ou -b para backup.\n";
-           return 1;
-       }
+        // Loop principal que recebe replicas do principal
+        while (true) {
+
+        }
+    
+    } else {
+        std::cerr << "Erro: tipo de servidor inválido. Use -p para primário ou -b para backup.\n";
+        return 1;
+    }
 
     return 0;
 }

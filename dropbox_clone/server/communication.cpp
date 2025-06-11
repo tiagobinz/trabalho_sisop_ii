@@ -325,7 +325,7 @@ void handle_client(int client_socket) {
     }
 }
 
-void init_server(int port, ServerType t) {
+int init_server(int port, ServerType t) {
 
     if (t == ServerType::PRIMARY) {
         // Criação do socket TCP (aceitar clientes)
@@ -344,20 +344,9 @@ void init_server(int port, ServerType t) {
         listen(server_fd, 10);
         std::cout << "[*] Servidor ouvindo na porta " << port << "...\n";
 
-        // Cria uma nova thread para realizar Broadcast UDP e avisar aos backups o endereço primário
+        // Cria uma nova thread para realizar alguns Broadcasts UDP e avisar aos backups o endereço primário
         std::thread(multicast_primary_info, port).detach();
-
-        // Loop principal que aceita conexões de clientes
-        while (true) {
-            sockaddr_in client_addr{};
-            socklen_t addrlen = sizeof(client_addr);
-
-            // Aceita nova conexão e cria um novo socket específico para o cliente
-            int client_socket = accept(server_fd, (sockaddr*)&client_addr, &addrlen);
-
-            // Cria uma nova thread para tratar o cliente de forma concorrente
-            std::thread(handle_client, client_socket).detach();
-        }
+        return server_fd;
 
     } else if (t == ServerType::BACKUP) {
 
@@ -385,11 +374,6 @@ void init_server(int port, ServerType t) {
             return;
         }
         std::cout << "[B] Conectado ao primário em " << primary_ip << ":" << port << "\n";
-    
-        // Loop principal que recebe replicas do principal
-        while (true) {
-            
-        }
     }
 }
 
