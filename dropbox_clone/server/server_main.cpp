@@ -26,9 +26,11 @@
 #include <thread>
 
 #include "communication.hpp"
+#include "service.hpp"
 
 int main(int argc, char* argv[]) {
     int port = 12345; // porta padrão
+    int port2 = 12346; // porta heartbeat
 
     if (argc != 2) {
         std::cerr << "Uso: ./myServer <type>\n";
@@ -45,13 +47,14 @@ int main(int argc, char* argv[]) {
         t = ServerType::PRIMARY;
         int server_fd = init_server(port, t);
 
+        // Cria thread para enviar heartbeat constantemente para todos os backups
+        std::thread(send_heartbeat_to_backups, port2).detach();
+
         // Loop principal que aceita conexões de clientes
         while (true) {
-
+            // Cria socket para o cliente
             sockaddr_in client_addr{};
             socklen_t addrlen = sizeof(client_addr);
-
-            // Aceita nova conexão e cria um novo socket específico para o cliente
             int client_socket = accept(server_fd, (sockaddr*)&client_addr, &addrlen);
 
             // Cria uma nova thread para tratar o cliente de forma concorrente
@@ -61,9 +64,12 @@ int main(int argc, char* argv[]) {
     } else if (server_type == "-b") {
         std::cout << "Iniciando servidor BACKUP na porta " << port << "\n";
         t = ServerType::BACKUP;
-        init_server(port, t);
+        int backup_fd = init_server(port, t);
 
-        // Loop principal que recebe replicas do principal
+        // Cria uma nova thread para executar o "protocolo heartbeat"
+        std::thread(listen_for_heartbeat, port2).detach();
+
+        // Loop principal para receber novas replicas do servidor primário
         while (true) {
 
         }

@@ -364,16 +364,17 @@ int init_server(int port, ServerType t) {
         if (inet_pton(AF_INET, primary_ip.c_str(), &primary_addr.sin_addr) <= 0) {
             std::cerr << "[ERRO] inet_pton falhou. IP: " << primary_ip << " inválido? \n";
             close(backup_fd);
-            return;
+            return -1;
         }
 
         // Conecta ao primário
         if (connect(backup_fd, (sockaddr*)&primary_addr, sizeof(primary_addr)) < 0) {
             std::cerr << "[ERRO] Falha ao conectar-se ao servidor.\n";
             close(backup_fd);
-            return;
+            return -1;
         }
         std::cout << "[B] Conectado ao primário em " << primary_ip << ":" << port << "\n";
+        return backup_fd;
     }
 }
 
