@@ -18,6 +18,8 @@
 #define SERVICE_HPP
 
 #include <string>
+#include <vector>
+#include <unordered_map>
 
 /*
  * server/service.hpp
@@ -28,13 +30,22 @@
 #define MAX_SERVER_MULTICAST    10
 #define HEARTBEAT_DELAY         10
 
+typedef struct ClientInfo {
+    std::string username = "";
+    std::string ip = "";
+    int session_count = 0;
+
+} ClientInfo;
+
+
 void multicast_primary_info(int multicast_port);
 std::string listen_for_primary_multicast(int multicast_port);
 
 void send_heartbeat_to_backups(int multicast_port);
 void listen_for_heartbeat(int port);
-std::string get_local_ip();
 
+std::string get_local_ip();
+std::string get_client_ip(int client_socket);
 
 
 #endif

@@ -186,3 +186,17 @@ std::string get_local_ip() {
     close(sock);
     return std::string(ip_str);
 }
+
+std::string get_client_ip(int client_socket) {
+    sockaddr_in client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+
+    if (getpeername(client_socket, (sockaddr*)&client_addr, &addr_len) == 0) {
+        char client_ip[INET_ADDRSTRLEN];
+        if (inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN)) {
+            return std::string(client_ip);
+        }
+    }
+
+    return "UNKNOWN";
+}

@@ -3,6 +3,7 @@
 #include <sys/stat.h>
 #include <filesystem>
 #include <fstream>
+#include <netinet/in.h>
 
 std::string format_time(std::time_t t) {
     char buf[64];
@@ -60,4 +61,14 @@ std::string read_file_content(const std::string& filepath) {
     std::ostringstream ss;
     ss << file.rdbuf();
     return ss.str();
+}
+
+bool recv_exact(int socket, void* buffer, size_t length) {
+    size_t total_read = 0;
+    while (total_read < length) {
+        ssize_t n = recv(socket, (char*)buffer + total_read, length - total_read, 0);
+        if (n <= 0) return false;
+        total_read += n;
+    }
+    return true;
 }

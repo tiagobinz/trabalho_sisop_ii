@@ -21,8 +21,8 @@
 std::unordered_map<std::string, std::vector<int>> user_sockets;
 std::mutex socket_mutex;
 
-// Controle do número máximo de dispositivos conectados
-std::unordered_map<std::string, int> user_session_count;
+// Registros com ip e sessões dos clients
+std::unordered_map<std::string, ClientInfo> clients;
 std::mutex session_mutex;
 
 // Evitar race conditions quando duas threads tentam escrever o mesmo arquivo no servidor
@@ -34,16 +34,6 @@ std::mutex& get_file_mutex(const std::string& user, const std::string& filename)
     std::lock_guard<std::mutex> guard(file_mutex_map_guard);
     std::string key = user + "/" + filename;
     return user_file_mutex[key];
-}
-
-bool recv_exact(int socket, void* buffer, size_t length) {
-    size_t total_read = 0;
-    while (total_read < length) {
-        ssize_t n = recv(socket, (char*)buffer + total_read, length - total_read, 0);
-        if (n <= 0) return false;
-        total_read += n;
-    }
-    return true;
 }
 
 std::string receive_full_payload(int client_socket) {
@@ -87,12 +77,14 @@ void handle_client(int client_socket) {
 
     // Extrai o nome do usuário do payload
     std::string username(login_pkt._payload, login_pkt.length);
+    clients[username].ip = get_client_ip(client_socket);
+    clients[username].username = username;
 
     // Controle de no máximo 2 dispositivos conectados simultaneamente
     {
         std::lock_guard<std::mutex> lock(session_mutex);
 
-        int& count = user_session_count[username];
+        int& count = clients[username].session_count;
 
         if (count >= 2) {
             std::string msg = "ERRO: Limite de 2 sessões simultâneas excedido.";
@@ -307,8 +299,8 @@ void handle_client(int client_socket) {
 
     {
         std::lock_guard<std::mutex> lock(session_mutex);
-        user_session_count[username]--;
-        std::cout << "[INFO] Sessão encerrada. Restam " << user_session_count[username]
+        clients[username].session_count--;
+        std::cout << "[INFO] Sessão encerrada. Restam " << clients[username].session_count
                 << " conexões para '" << username << "'.\n";
     }
 
@@ -344,7 +336,7 @@ int init_server(int port, ServerType t) {
         listen(server_fd, 10);
         std::cout << "[*] Servidor ouvindo na porta " << port << "...\n";
 
-        // Cria uma nova thread para realizar alguns Broadcasts UDP e avisar aos backups o endereço primário
+        // Cria uma nova thread para realizar alguns Multicasts UDP e avisar aos backups o endereço primário
         std::thread(multicast_primary_info, port).detach();
         return server_fd;
 

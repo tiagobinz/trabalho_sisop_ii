@@ -1,6 +1,8 @@
 #include "communication.hpp"
 #include "sync_manager.hpp"
 #include "../common/packet.hpp"
+#include "../common/utils.hpp"
+
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -77,16 +79,6 @@ void send_large_payload(uint16_t type, const std::string& payload) {
     }
 
     std::cout << "[DEBUG] Envio completo de " << seqn << " pacotes.\n";
-}
-
-bool recv_exact(int socket, void* buffer, size_t length) {
-    size_t total_read = 0;
-    while (total_read < length) {
-        ssize_t n = recv(socket, (char*)buffer + total_read, length - total_read, 0);
-        if (n <= 0) return false;
-        total_read += n;
-    }
-    return true;
 }
 
 std::string receive_full_payload() {
