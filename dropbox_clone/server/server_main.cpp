@@ -27,6 +27,7 @@
 
 #include "communication.hpp"
 #include "service.hpp"
+#include "../common/packet.hpp"
 
 int main(int argc, char* argv[]) {
 
@@ -39,11 +40,13 @@ int main(int argc, char* argv[]) {
     
     ServerType t;
 
+    // SERVER PRIMÁRIO
     if (server_type == "-p") {
         std::cout << "Iniciando servidor PRIMÁRIO na porta " << CLIENT_PORT << "\n";
         t = ServerType::PRIMARY;
 
         int server_fd = init_server(CLIENT_PORT, t);
+
         // Cria uma nova thread para realizar alguns Multicasts UDP e avisar aos backups o endereço primário
         std::thread(multicast_primary_info, MULTICAST_PORT).detach();
 
@@ -65,6 +68,7 @@ int main(int argc, char* argv[]) {
             std::thread(handle_client, client_socket).detach();
         }
 
+    // SERVER BACKUP
     } else if (server_type == "-b") {
         std::cout << "Iniciando servidor BACKUP na porta " << REPLICA_PORT << "\n";
         t = ServerType::BACKUP;
@@ -75,10 +79,25 @@ int main(int argc, char* argv[]) {
 
         // Loop principal que aceita conexões do server para receber replicas
         while(true) {
-            std::this_thread::sleep_for(std::chrono::seconds(10)); // evita busy-wait
+
+            Packet pkt;
+            if (recv(backup_fd, &pkt, sizeof(Packet), 0) > 0) {
+                std::string payload(pkt._payload, pkt.length);
+                std::cout << "[INFO] Replica recebida: " << payload << "\n";
+
+                if (payload.rfind("DELETE\n", 0) == 0) {
+
+
+                } else if (payload.rfind("UPLOAD\n", 0) == 0) {
+
+
+                } else if (payload.rfind("GET_ALL_FILES\n", 0) == 0) {
+
+
+                }
+            }
         }
         
-    
     } else {
         std::cerr << "Erro: tipo de servidor inválido. Use -p para primário ou -b para backup.\n";
         return 1;

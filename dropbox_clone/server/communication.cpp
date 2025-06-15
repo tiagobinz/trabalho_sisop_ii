@@ -177,13 +177,16 @@ void handle_client(int client_socket) {
             }
 
             // Replica da ação para os backups
-            std::lock_guard<std::mutex> lock(backup_mutex);
-            for (int sock : backup_sockets) {
-                int res = send(sock, &pkt, sizeof(Packet), 0);
-                if (res <= 0) {
-                std::cerr << "[REPLICA] Erro ao replicar para backup (" << sock << ")\n";
+            {
+                std::lock_guard<std::mutex> lock(backup_mutex);
+                for (int sock : backup_sockets) {
+                    if (send(sock, &pkt, sizeof(Packet), 0) <= 0) {
+                        std::cerr << "[ERRO] Replica não foi enviada " << sock << "\n";
+                    } else {
+                        std::cerr << "[P] DELETE replicado para Backup: " << sock << "\n";
+                    }
+                }
             }
-    }
         }
     
         // Trata comando UPLOAD
