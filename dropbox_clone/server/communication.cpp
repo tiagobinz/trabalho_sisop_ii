@@ -17,9 +17,19 @@
 #include <vector>
 #include <algorithm>
 
-// Registrar os sockets ativos por usuário
+// Registros dos sockets ativos por usuário
 std::unordered_map<std::string, std::vector<int>> user_sockets;
 std::mutex socket_mutex;
+
+// Lista dos sockets dos backups
+std::vector<int> backup_sockets;
+std::mutex backup_mutex;
+
+void register_backup_socket(int backup_socket) {
+    std::lock_guard<std::mutex> lock(backup_mutex);
+    backup_sockets.push_back(backup_socket);
+    std::cout << "[INFO] Backup em socket: " << backup_socket << " armazenado para replicas \n";
+}
 
 // Registros com ip e sessões dos clients
 std::unordered_map<std::string, ClientInfo> clients;
@@ -165,6 +175,15 @@ void handle_client(int client_socket) {
                     }
                 }
             }
+
+            // Replica da ação para os backups
+            std::lock_guard<std::mutex> lock(backup_mutex);
+            for (int sock : backup_sockets) {
+                int res = send(sock, &pkt, sizeof(Packet), 0);
+                if (res <= 0) {
+                std::cerr << "[REPLICA] Erro ao replicar para backup (" << sock << ")\n";
+            }
+    }
         }
     
         // Trata comando UPLOAD
@@ -335,14 +354,11 @@ int init_server(int port, ServerType t) {
         // Inicia o modo de escuta por conexões
         listen(server_fd, 10);
         std::cout << "[*] Servidor ouvindo na porta " << port << "...\n";
-
-        // Cria uma nova thread para realizar alguns Multicasts UDP e avisar aos backups o endereço primário
-        std::thread(multicast_primary_info, port).detach();
         return server_fd;
 
     } else if (t == ServerType::BACKUP) {
 
-        std::string primary_ip = listen_for_primary_multicast(port);
+        std::string primary_ip = listen_for_primary_multicast(MULTICAST_PORT);
 
         // Criação do socket TCP (escutar server primário)
         int backup_fd = socket(AF_INET, SOCK_STREAM, 0);

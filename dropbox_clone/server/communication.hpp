@@ -40,4 +40,6 @@ int init_server(int port, ServerType t);
 
 void send_large_payload(int socket, uint16_t type, const std::string& payload);
 
+void register_backup_socket(int backup_socket);
+
 #endif

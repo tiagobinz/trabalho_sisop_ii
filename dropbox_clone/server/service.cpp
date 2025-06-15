@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "service.hpp"
+#include "communication.hpp"
 
 void multicast_primary_info(int multicast_port) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -104,7 +105,7 @@ void send_heartbeat_to_backups(int multicast_port) {
     close(sock);
 }
 
-void listen_for_heartbeat(int port) {
+void listen_heartbeat_from_server(int port) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
         perror("socket");
@@ -164,6 +165,21 @@ void listen_for_heartbeat(int port) {
     }
 
     close(sock);
+}
+
+void listen_sockets_from_backups(int replication_fd) {
+    while (true) {
+        sockaddr_in backup_addr{};
+        socklen_t addrlen = sizeof(backup_addr);
+        int backup_socket = accept(replication_fd, (sockaddr*)&backup_addr, &addrlen);
+        if (backup_socket < 0) {
+            std::cerr << "[ERRO] Falha ao aceitar conexão de backup: " << strerror(errno) << "\n";
+            continue;
+        }
+        std::cout << "[P] Conexão com Backup estabelecida!\n";
+
+        if (backup_socket >= 0) register_backup_socket(backup_socket);
+    }
 }
 
 std::string get_local_ip() {

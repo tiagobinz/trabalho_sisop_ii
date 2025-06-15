@@ -30,6 +30,11 @@
 #define MAX_SERVER_MULTICAST    10
 #define HEARTBEAT_DELAY         10
 
+#define CLIENT_PORT             12345
+#define MULTICAST_PORT          12346
+#define HEARTBEAT_PORT          12347
+#define REPLICA_PORT            12348
+
 typedef struct ClientInfo {
     std::string username = "";
     std::string ip = "";
@@ -42,7 +47,9 @@ void multicast_primary_info(int multicast_port);
 std::string listen_for_primary_multicast(int multicast_port);
 
 void send_heartbeat_to_backups(int multicast_port);
-void listen_for_heartbeat(int port);
+void listen_heartbeat_from_server(int port);
+
+void listen_sockets_from_backups(int replication_fd);
 
 std::string get_local_ip();
 std::string get_client_ip(int client_socket);
