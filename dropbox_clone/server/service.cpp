@@ -22,8 +22,7 @@ void multicast_primary_info(int multicast_port) {
     multicast_addr.sin_port = htons(multicast_port);
     multicast_addr.sin_addr.s_addr = inet_addr(MULTICAST_GROUP.c_str());
 
-    std::string local_ip = get_local_ip();
-    std::string message = "PRIMARY:" + local_ip;
+    std::string message = "PRIMARY:" + info.primary_ip;
 
     int multicast_count = 0;
 
@@ -31,7 +30,7 @@ void multicast_primary_info(int multicast_port) {
         sendto(sock, message.c_str(), message.size(), 0, (sockaddr*)&multicast_addr, sizeof(multicast_addr));
         
         std::cout << "[P] Multicast [" << multicast_count+1 << "] enviado\n";
-        std::this_thread::sleep_for(std::chrono::seconds(3));
+        std::this_thread::sleep_for(std::chrono::seconds(MULTICAST_DELAY));
 
         multicast_count++;
     }
@@ -99,7 +98,7 @@ void send_heartbeat_to_backups(int multicast_port) {
         sendto(sock, heartbeat_msg.c_str(), heartbeat_msg.size(), 0,
                (sockaddr*)&multicast_addr, sizeof(multicast_addr));
         std::cout << "[P] Heartbeat enviado aos backups\n";
-        std::this_thread::sleep_for(std::chrono::seconds(3));
+        std::this_thread::sleep_for(std::chrono::seconds(MULTICAST_DELAY));
     }
 
     close(sock);
@@ -167,20 +166,26 @@ void listen_heartbeat_from_server(int port) {
     close(sock);
 }
 
-void listen_sockets_from_backups(int replication_fd) {
+void listen_backup_to_connect(int replica_fd) {
     while (true) {
         sockaddr_in backup_addr{};
         socklen_t addrlen = sizeof(backup_addr);
-        int backup_socket = accept(replication_fd, (sockaddr*)&backup_addr, &addrlen);
-        if (backup_socket < 0) {
-            std::cerr << "[ERRO] Falha ao aceitar conexão de backup: " << strerror(errno) << "\n";
-            continue;
-        }
-        std::cout << "[P] Conexão com Backup estabelecida!\n";
+        int backup_socket = accept(replica_fd, (sockaddr*)&backup_addr, &addrlen);
 
-        if (backup_socket >= 0) register_backup_socket(backup_socket);
+        if (backup_socket >= 0) {
+            char ip_str[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &backup_addr.sin_addr, ip_str, sizeof(ip_str));
+
+            register_backup_socket(backup_socket);
+            info.backups_ip.push_back(std::string(ip_str));
+            std::cout << "[INFO] Conexão de backup realizada. Salvando IP " << ip_str << " e socket " << backup_socket << "\n";
+
+        } else {
+            perror("accept backup");
+        }
     }
 }
+
 
 std::string get_local_ip() {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);

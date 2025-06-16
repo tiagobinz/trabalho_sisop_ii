@@ -27,8 +27,9 @@
  */
 
 #define MULTICAST_GROUP         std::string("239.0.0.1")
-#define MAX_SERVER_MULTICAST    10
-#define HEARTBEAT_DELAY         10
+#define MULTICAST_DELAY         3
+#define MAX_SERVER_MULTICAST    5
+#define HEARTBEAT_DELAY         9
 
 #define CLIENT_PORT             12345
 #define MULTICAST_PORT          12346
@@ -42,6 +43,20 @@ typedef struct ClientInfo {
 
 } ClientInfo;
 
+ enum class ServerType {
+    PRIMARY,
+    BACKUP
+ };
+typedef struct ServerInfo {
+    ServerType type;
+    std::string primary_ip;
+    std::unordered_map<std::string, ClientInfo> clients;
+    std::vector<std::string> backups_ip;
+
+} ServerInfo;
+
+extern ServerInfo info;
+
 
 void multicast_primary_info(int multicast_port);
 std::string listen_for_primary_multicast(int multicast_port);
@@ -49,7 +64,7 @@ std::string listen_for_primary_multicast(int multicast_port);
 void send_heartbeat_to_backups(int multicast_port);
 void listen_heartbeat_from_server(int port);
 
-void listen_sockets_from_backups(int replication_fd);
+void listen_backup_to_connect(int replication_fd);
 
 std::string get_local_ip();
 std::string get_client_ip(int client_socket);

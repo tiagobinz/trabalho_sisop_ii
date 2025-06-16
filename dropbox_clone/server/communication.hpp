@@ -21,16 +21,13 @@
 #include <cstdint>
 #include <mutex>
 
+#include "service.hpp"
+
 /*
  * server/communication.hpp
  * Módulo de comunicação no lado do servidor
  */
-
- enum class ServerType {
-    PRIMARY,
-    BACKUP
- };
-
+   
 std::mutex& get_file_mutex(const std::string& user, const std::string& filename);
 bool recv_exact(int socket, void* buffer, size_t length);
 std::string receive_full_payload(int client_socket);

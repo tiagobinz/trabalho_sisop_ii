@@ -29,6 +29,8 @@
 #include "service.hpp"
 #include "../common/packet.hpp"
 
+ServerInfo info;
+
 int main(int argc, char* argv[]) {
 
     if (argc != 2) {
@@ -38,14 +40,14 @@ int main(int argc, char* argv[]) {
     // Extração dos argumentos
     std::string server_type = argv[1];  // -p (primary), -b (backup)
     
-    ServerType t;
-
     // SERVER PRIMÁRIO
     if (server_type == "-p") {
         std::cout << "Iniciando servidor PRIMÁRIO na porta " << CLIENT_PORT << "\n";
-        t = ServerType::PRIMARY;
+        
+        info.type = ServerType::PRIMARY;
+        info.primary_ip = get_local_ip();
 
-        int server_fd = init_server(CLIENT_PORT, t);
+        int server_fd = init_server(CLIENT_PORT, info.type);
 
         // Cria uma nova thread para realizar alguns Multicasts UDP e avisar aos backups o endereço primário
         std::thread(multicast_primary_info, MULTICAST_PORT).detach();
@@ -53,9 +55,9 @@ int main(int argc, char* argv[]) {
         // Cria thread para enviar heartbeat constantemente para todos os backups
         std::thread(send_heartbeat_to_backups, HEARTBEAT_PORT).detach();
 
-        int replica_fd = init_server(REPLICA_PORT, t);
-        // Cria thread para receber conexões dos backups e salvar sockets
-        std::thread(listen_sockets_from_backups, replica_fd).detach();
+        // Cria thread para guardar sockets e IPs dos backups
+        int replica_fd = init_server(REPLICA_PORT, info.type);
+        std::thread(listen_backup_to_connect, replica_fd).detach();
 
         // Loop principal que aceita conexões de clientes
         while (true) {
@@ -71,8 +73,12 @@ int main(int argc, char* argv[]) {
     // SERVER BACKUP
     } else if (server_type == "-b") {
         std::cout << "Iniciando servidor BACKUP na porta " << REPLICA_PORT << "\n";
-        t = ServerType::BACKUP;
-        int backup_fd = init_server(REPLICA_PORT, t);
+        
+        info.type = ServerType::BACKUP;
+        info.primary_ip = listen_for_primary_multicast(MULTICAST_PORT);
+        info.backups_ip.push_back(get_local_ip());
+
+        int backup_fd = init_server(REPLICA_PORT, info.type);
 
         // Cria uma nova thread para executar o "protocolo heartbeat"
         std::thread(listen_heartbeat_from_server, HEARTBEAT_PORT).detach();

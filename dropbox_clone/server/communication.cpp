@@ -28,7 +28,6 @@ std::mutex backup_mutex;
 void register_backup_socket(int backup_socket) {
     std::lock_guard<std::mutex> lock(backup_mutex);
     backup_sockets.push_back(backup_socket);
-    std::cout << "[INFO] Backup em socket: " << backup_socket << " armazenado para replicas \n";
 }
 
 // Registros com ip e sessões dos clients
