@@ -17,11 +17,13 @@
 #include <vector>
 #include <algorithm>
 
-// Registros dos sockets ativos por usuário
-std::unordered_map<std::string, std::vector<int>> user_sockets;
+// Mutex dos sockets ativos por usuário
 std::mutex socket_mutex;
 
-// Lista dos sockets dos backups
+// Mutex das sessões dos clients
+std::mutex session_mutex;
+
+// Mutex dos sockets dos backups
 std::vector<int> backup_sockets;
 std::mutex backup_mutex;
 
@@ -29,10 +31,6 @@ void register_backup_socket(int backup_socket) {
     std::lock_guard<std::mutex> lock(backup_mutex);
     backup_sockets.push_back(backup_socket);
 }
-
-// Registros com ip e sessões dos clients
-std::unordered_map<std::string, ClientInfo> clients;
-std::mutex session_mutex;
 
 // Evitar race conditions quando duas threads tentam escrever o mesmo arquivo no servidor
 std::unordered_map<std::string, std::mutex> user_file_mutex;
@@ -80,23 +78,35 @@ std::string receive_full_payload(int client_socket) {
 }
 
 void handle_client(int client_socket) {
+
+    // String para as replicas
+    std::string replica_msg;
+
     // Recebe o primeiro pacote do cliente (esperado: login)
     Packet login_pkt;
     recv(client_socket, &login_pkt, sizeof(Packet), 0);
 
     // Extrai o nome do usuário do payload
     std::string username(login_pkt._payload, login_pkt.length);
-    clients[username].ip = get_client_ip(client_socket);
-    clients[username].username = username;
+
+    info.clients[username].ip = get_client_ip(client_socket);
+    replica_msg = "SERVER_INFO|CLIENTS|" + username + "|IP:" + info.clients[username].ip;
+    replicate_to_all_backups(replica_msg);
+    replica_msg.clear();
+
+    info.clients[username].username = username;
+    replica_msg = "SERVER_INFO|CLIENTS|" + username + "|USERNAME:" + info.clients[username].username;
+    replicate_to_all_backups(replica_msg);
+    replica_msg.clear();
 
     // Controle de no máximo 2 dispositivos conectados simultaneamente
     {
         std::lock_guard<std::mutex> lock(session_mutex);
 
-        int& count = clients[username].session_count;
+        int& count = info.clients[username].session_count;
 
         if (count >= 2) {
-            std::string msg = "ERRO: Limite de 2 sessões simultâneas excedido.";
+            std::string msg = "[DEBUG] Limite de 2 sessões simultâneas excedido.";
             Packet deny = make_packet(CMD, 0, 0, msg.size(), msg);
             send(client_socket, &deny, sizeof(Packet), 0);
             close(client_socket);
@@ -105,13 +115,22 @@ void handle_client(int client_socket) {
         }
 
         count++;
+
+        replica_msg = "SERVER_INFO|CLIENTS|" + username + "|SESSION_COUNT:" + std::to_string(count);
+        replicate_to_all_backups(replica_msg);
+        replica_msg.clear();
+
         std::cout << "[INFO] Sessões ativas para '" << username << "': " << count << "\n";
     }
 
     std::cout << "[+] Novo cliente conectado: " << username << "\n";
     {
         std::lock_guard<std::mutex> lock(socket_mutex);
-        user_sockets[username].push_back(client_socket);
+        info.clients[username].sockets.push_back(client_socket);
+
+        replica_msg = "SERVER_INFO|CLIENTS|" + username + "|SOCKETS:" + std::to_string(client_socket);
+        replicate_to_all_backups(replica_msg);
+        replica_msg.clear();
     }
 
     // Envia confirmação
@@ -168,21 +187,9 @@ void handle_client(int client_socket) {
             Packet pkt = make_packet(CMD, 0, 0, notification.size(), notification);
             {
                 std::lock_guard<std::mutex> lock(socket_mutex);
-                for (int sock : user_sockets[username]) {
+                for (int sock : info.clients[username].sockets) {
                     if (sock != client_socket) { // não envia de volta para quem enviou
                         send(sock, &pkt, sizeof(Packet), 0);
-                    }
-                }
-            }
-
-            // Replica da ação para os backups
-            {
-                std::lock_guard<std::mutex> lock(backup_mutex);
-                for (int sock : backup_sockets) {
-                    if (send(sock, &pkt, sizeof(Packet), 0) <= 0) {
-                        std::cerr << "[ERRO] Replica não foi enviada " << sock << "\n";
-                    } else {
-                        std::cerr << "[P] DELETE replicado para Backup: " << sock << "\n";
                     }
                 }
             }
@@ -249,7 +256,7 @@ void handle_client(int client_socket) {
                     std::string notification = "UPLOAD\n" + filename + "\n" + ts_str + "\n" + content;
                     {
                         std::lock_guard<std::mutex> lock(socket_mutex);
-                        for (int sock : user_sockets[username]) {
+                        for (int sock : info.clients[username].sockets) {
                             if (sock != client_socket) { // não envia de volta para quem enviou
                                 send_large_payload(sock, CMD, notification);
                             }
@@ -308,6 +315,8 @@ void handle_client(int client_socket) {
                 send_large_payload(client_socket, CMD, full_command);
                 std::cout << "[SYNC] Enviado arquivo '" << filename << "' ao novo cliente\n";
             }
+        } else if (payload == "INFO") {
+            print_server_info();
         }
     
         else {
@@ -320,14 +329,19 @@ void handle_client(int client_socket) {
 
     {
         std::lock_guard<std::mutex> lock(session_mutex);
-        clients[username].session_count--;
-        std::cout << "[INFO] Sessão encerrada. Restam " << clients[username].session_count
+        info.clients[username].session_count--;
+
+        replica_msg = "SERVER_INFO|CLIENTS|" + username + "|SESSION_COUNT:" + std::to_string(info.clients[username].session_count);
+        replicate_to_all_backups(replica_msg);
+        replica_msg.clear();
+
+        std::cout << "[INFO] Sessão encerrada. Restam " << info.clients[username].session_count
                 << " conexões para '" << username << "'.\n";
     }
 
     {
         std::lock_guard<std::mutex> lock(socket_mutex);
-        auto& sockets = user_sockets[username];
+        auto& sockets = info.clients[username].sockets;
         sockets.erase(
             std::remove_if(
                 sockets.begin(), sockets.end(),
@@ -335,6 +349,10 @@ void handle_client(int client_socket) {
             ),
             sockets.end()
         );
+
+        replica_msg = "SERVER_INFO|CLIENTS|" + username + "|REMOVE_SOCKET:" + std::to_string(client_socket);
+        replicate_to_all_backups(replica_msg);
+        replica_msg.clear();
     }
 }
 
@@ -360,8 +378,6 @@ int init_server(int port, ServerType t) {
 
     } else if (t == ServerType::BACKUP) {
 
-        std::string primary_ip = listen_for_primary_multicast(MULTICAST_PORT);
-
         // Criação do socket TCP (escutar server primário)
         int backup_fd = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -371,8 +387,8 @@ int init_server(int port, ServerType t) {
         primary_addr.sin_port = htons(port);
 
         // Converte o IP string para binário
-        if (inet_pton(AF_INET, primary_ip.c_str(), &primary_addr.sin_addr) <= 0) {
-            std::cerr << "[ERRO] inet_pton falhou. IP: " << primary_ip << " inválido? \n";
+        if (inet_pton(AF_INET, info.primary_ip.c_str(), &primary_addr.sin_addr) <= 0) {
+            std::cerr << "[ERRO] inet_pton falhou. IP: " << info.primary_ip << " inválido? \n";
             close(backup_fd);
             return -1;
         }
@@ -383,7 +399,7 @@ int init_server(int port, ServerType t) {
             close(backup_fd);
             return -1;
         }
-        std::cout << "[B] Conectado ao primário em " << primary_ip << ":" << port << "\n";
+        std::cout << "[B] Conectado ao primário em " << info.primary_ip << ":" << port << "\n";
         return backup_fd;
     }
 }
@@ -416,4 +432,18 @@ void send_large_payload(int socket, uint16_t type, const std::string& payload) {
     }
 
     std::cout << "[DEBUG] Envio completo de " << seqn << " pacotes\n";
+}
+
+void replicate_to_all_backups(const std::string& replica_msg) {
+    std::lock_guard<std::mutex> lock(backup_mutex);
+    std::string final_msg = replica_msg + "\n";
+
+    for (int sock : backup_sockets) {
+        ssize_t sent = send(sock, final_msg.c_str(), final_msg.size(), 0);
+        if (sent < 0) {
+            perror("[ERRO] Erro ao enviar réplica para backup");
+        } else {
+            std::cout << "[P] Réplica enviada para backup no socket " << sock << "\n";
+        }
+    }
 }

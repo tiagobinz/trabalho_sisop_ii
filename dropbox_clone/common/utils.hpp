@@ -21,6 +21,7 @@
 
  #include <string>
  #include <chrono>
+ #include <vector>
 
 // Converte tempo UNIX para string legível
 std::string format_time(std::time_t t);
@@ -33,5 +34,7 @@ void delete_file(const std::string& filepath);
 
 // Extração do conteúdo de um arquivo no formato de uma string
 std::string read_file_content(const std::string& filepath);
+
+std::string join_backups_ip(std::vector<std::string> backups_ip);
 
 bool recv_exact(int socket, void* buffer, size_t length);

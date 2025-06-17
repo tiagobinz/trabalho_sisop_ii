@@ -76,33 +76,14 @@ int main(int argc, char* argv[]) {
         
         info.type = ServerType::BACKUP;
         info.primary_ip = listen_for_primary_multicast(MULTICAST_PORT);
-        info.backups_ip.push_back(get_local_ip());
 
         int backup_fd = init_server(REPLICA_PORT, info.type);
 
         // Cria uma nova thread para executar o "protocolo heartbeat"
         std::thread(listen_heartbeat_from_server, HEARTBEAT_PORT).detach();
 
-        // Loop principal que aceita conexões do server para receber replicas
-        while(true) {
-
-            Packet pkt;
-            if (recv(backup_fd, &pkt, sizeof(Packet), 0) > 0) {
-                std::string payload(pkt._payload, pkt.length);
-                std::cout << "[INFO] Replica recebida: " << payload << "\n";
-
-                if (payload.rfind("DELETE\n", 0) == 0) {
-
-
-                } else if (payload.rfind("UPLOAD\n", 0) == 0) {
-
-
-                } else if (payload.rfind("GET_ALL_FILES\n", 0) == 0) {
-
-
-                }
-            }
-        }
+        // Loop principal que recebe replicas do primário
+        listen_primary_for_replicas(backup_fd);
         
     } else {
         std::cerr << "Erro: tipo de servidor inválido. Use -p para primário ou -b para backup.\n";

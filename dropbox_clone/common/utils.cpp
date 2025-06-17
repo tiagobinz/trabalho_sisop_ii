@@ -1,4 +1,6 @@
 #include "utils.hpp"
+#include "../server/service.hpp"
+
 #include <iostream>
 #include <sys/stat.h>
 #include <filesystem>
@@ -62,6 +64,18 @@ std::string read_file_content(const std::string& filepath) {
     ss << file.rdbuf();
     return ss.str();
 }
+
+std::string join_backups_ip(std::vector<std::string> backups_ip) {
+    std::string result;
+    for (size_t i = 0; i < backups_ip.size(); ++i) {
+        result += backups_ip[i];
+        if (i < backups_ip.size() - 1) {
+            result += ",";
+        }
+    }
+    return result;
+}
+
 
 bool recv_exact(int socket, void* buffer, size_t length) {
     size_t total_read = 0;

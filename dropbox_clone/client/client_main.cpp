@@ -192,6 +192,12 @@ void command_loop(const std::string& username) {
                 std::cout << result;
             }
 
+            else if (command == "info") {
+                // Envia pacote pedindo para printar info do servidor
+                Packet pkt = make_packet(CMD, 0, 0, 0, "INFO");
+                send_packet(pkt);
+            }
+
             // Comando inválido
             else {
                 std::cout << "[ERRO] Comando não reconhecido.\n";
