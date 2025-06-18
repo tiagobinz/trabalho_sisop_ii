@@ -94,10 +94,12 @@ void handle_client(int client_socket) {
     replicate_to_all_backups(replica_msg);
     replica_msg.clear();
 
-    info.clients[username].username = username;
-    replica_msg = "SERVER_INFO|CLIENTS|" + username + "|USERNAME:" + info.clients[username].username;
-    replicate_to_all_backups(replica_msg);
-    replica_msg.clear();
+    if (info.clients[username].username.empty()) {
+        info.clients[username].username = username;
+        replica_msg = "SERVER_INFO|CLIENTS|" + username + "|USERNAME:" + info.clients[username].username;
+        replicate_to_all_backups(replica_msg);
+        replica_msg.clear();
+    }
 
     // Controle de no máximo 2 dispositivos conectados simultaneamente
     {
@@ -351,6 +353,10 @@ void handle_client(int client_socket) {
         );
 
         replica_msg = "SERVER_INFO|CLIENTS|" + username + "|REMOVE_SOCKET:" + std::to_string(client_socket);
+        replicate_to_all_backups(replica_msg);
+        replica_msg.clear();
+
+        replica_msg = "SERVER_INFO|CLIENTS|" + username + "|IP:";
         replicate_to_all_backups(replica_msg);
         replica_msg.clear();
     }

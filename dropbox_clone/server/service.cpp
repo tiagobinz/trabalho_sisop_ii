@@ -8,10 +8,12 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <algorithm>
+#include <random>
 
 #include "../common/utils.hpp"
 #include "service.hpp"
 #include "communication.hpp"
+#include "election.hpp"
 
 void multicast_primary_info(int multicast_port) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -165,6 +167,7 @@ void listen_heartbeat_from_server(int port) {
             std::cout << "[B] Servidor Primário falhou. Iniciando eleição...\n";
 
             // CHAMAR ALGORITMO DE ELEIÇÃO AQUI
+            std::string new_primary_ip = Election(info.backups);
 
             break;
         }
@@ -193,10 +196,11 @@ void listen_backup_to_connect(int replica_fd) {
             inet_ntop(AF_INET, &backup_addr.sin_addr, ip_str, sizeof(ip_str));
 
             register_backup_socket(backup_socket);
-            info.backups_ip.push_back(std::string(ip_str));
+            int election_id = receive_election_id_from_backup(backup_socket, ip_str);
+            info.backups[ip_str] = election_id;
 
-            std::cout << "[INFO] Conexão de backup realizada. Salvando IP " << ip_str << " e socket " << backup_socket << "\n";
-
+            std::cout << "[P] Conexão com backup realizada:\n";
+            std::cout << "[INFO] IP: " << ip_str << " | election_id: " << info.backups[ip_str] << "\n";
         } else {
             auto now = clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_connection_time).count();
@@ -211,9 +215,8 @@ void listen_backup_to_connect(int replica_fd) {
     }
 
     // Depois que todos os backups se conectaram ao primário, replica a lista dos IPs dos backups para posterior eleição
-    std::string replica_msg = "SERVER_INFO|BACKUP_IPS|" + join_backups_ip(info.backups_ip);
+    std::string replica_msg = "SERVER_INFO|BACKUPS|" + join_backups(info.backups);
     replicate_to_all_backups(replica_msg);
-    replica_msg.clear();
 
     close(replica_fd);
 }
@@ -270,7 +273,11 @@ bool process_replica(std::string msg) {
 
             if (field == "IP") {
                 info.clients[username].ip = value;
-                std::cout << "[INFO] Atualizado IP de " << username << " para " << value << "\n";
+                if (!value.empty()) {
+                    std::cout << "[INFO] Atualizado IP de " << username << " para " << value << "\n";
+                } else {
+                    std::cout << "[INFO] Removido IP de " << username << "\n";
+                }
             
             } else if (field == "USERNAME") {
                 info.clients[username].username = value;
@@ -302,7 +309,7 @@ bool process_replica(std::string msg) {
                     std::cerr << "[ERRO] Erro ao converter socket: " << value << "\n";
                     return false;
                 }
-                
+
             } else if (field == "REMOVE_SOCKET") {
                  try {
                     int socket_to_remove = std::stoi(value);
@@ -324,13 +331,20 @@ bool process_replica(std::string msg) {
             updated = true;
         }
 
-    } else if (section == "SERVER_INFO" && category == "BACKUP_IPS") {
-        info.backups_ip.clear(); // reseta para evitar duplicatas
+    } else if (section == "SERVER_INFO" && category == "BACKUPS") {
+        info.backups.clear(); // reseta para evitar duplicatas
 
         std::stringstream ss(data);
-        std::string ip;
-        while (std::getline(ss, ip, ',')) {
-            info.backups_ip.push_back(ip);
+        std::string pair;
+
+        while (std::getline(ss, pair, ',')) {
+            size_t sep = pair.find(':');
+
+            if (sep != std::string::npos) {
+                std::string ip = pair.substr(0, sep);
+                int id = std::stoi(pair.substr(sep + 1));
+                info.backups[ip] = id;
+            }
         }
         std::cout << "[INFO] IPs de servidores backup atualizados \n";
 
@@ -382,6 +396,46 @@ std::string get_client_ip(int client_socket) {
     return "UNKNOWN";
 }
 
+size_t generate_random_election_id() {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<size_t> dist(1000, 999999);
+    return dist(gen);
+}
+
+void send_election_id_to_primary(int backup_fd) {
+    int id = generate_random_election_id();
+    std::string msg = "ELECTION_ID:" + std::to_string(id);
+    send(backup_fd, msg.c_str(), msg.size(), 0);
+    std::cout << "[B] Enviado election_id: " << id << " ao primário\n";
+}
+
+int receive_election_id_from_backup(int backup_socket, const std::string& ip_str) {
+    char buffer[256];
+    ssize_t len = recv(backup_socket, buffer, sizeof(buffer) - 1, 0);
+
+    int election_id = -1;
+
+    if (len > 0) {
+        buffer[len] = '\0';
+        std::string msg(buffer);
+
+        if (msg.rfind("ELECTION_ID:", 0) == 0) {
+            std::string id_str = msg.substr(std::string("ELECTION_ID:").length());
+            election_id = std::stoi(id_str);
+            if(election_id == 0) 
+                std::cerr << "[ERRO] ID inválido recebido do backup " << ip_str << ": " << id_str << "\n";
+                
+        } else {
+            std::cerr << "[ERRO] Mensagem inesperada recebida do backup " << ip_str
+                      << ": " << msg << "\n";
+        }
+    } else {
+        std::cerr << "[ERRO] Falha ao receber election_id do backup " << ip_str << "\n";
+    }
+    return election_id;
+}
+
 void print_server_info() {
     std::cout << "\n========== ESTADO DO SERVIDOR ==========\n";
 
@@ -395,9 +449,10 @@ void print_server_info() {
 
     // Mostrar IPs dos backups (válido apenas no primário)
     if (info.type == ServerType::PRIMARY) {
-        std::cout << "Backups conectados (" << info.backups_ip.size() << "):\n";
-        for (const auto& ip : info.backups_ip) {
-            std::cout << "  - " << ip << "\n";
+        std::cout << "Backups conectados (" << info.backups.size() << "):\n";
+        for (const auto& [ip, id] : info.backups) {
+            std::cout << " IP: " << ip << "\n";
+            std::cout << " ID: " << id << "\n";
         }
     }
 

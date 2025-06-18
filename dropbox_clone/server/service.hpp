@@ -39,7 +39,7 @@
 #define REPLICA_PORT            12348
 
 typedef struct ClientInfo {
-    std::string username = "";
+    std::string username;
     std::string ip = "";
     int session_count = 0;
     std::vector<int> sockets;
@@ -53,8 +53,9 @@ enum class ServerType {
 typedef struct ServerInfo {
     ServerType type;
     std::string primary_ip;
+    std::string ip;
     std::unordered_map<std::string, ClientInfo> clients;
-    std::vector<std::string> backups_ip;
+    std::unordered_map<std::string, int> backups;
 
 } ServerInfo;
 
@@ -73,6 +74,10 @@ bool process_replica(std::string msg);
 
 std::string get_local_ip();
 std::string get_client_ip(int client_socket);
+
+size_t generate_random_election_id();
+void send_election_id_to_primary(int backup_fd);
+int receive_election_id_from_backup(int backup_socket, const std::string& ip_str);
 
 void print_server_info();
 

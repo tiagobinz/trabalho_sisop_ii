@@ -39,13 +39,13 @@ int main(int argc, char* argv[]) {
     }
     // Extração dos argumentos
     std::string server_type = argv[1];  // -p (primary), -b (backup)
-    
+
     // SERVER PRIMÁRIO
     if (server_type == "-p") {
         std::cout << "Iniciando servidor PRIMÁRIO na porta " << CLIENT_PORT << "\n";
         
         info.type = ServerType::PRIMARY;
-        info.primary_ip = get_local_ip();
+        info.primary_ip = info.ip = get_local_ip();
 
         int server_fd = init_server(CLIENT_PORT, info.type);
 
@@ -55,7 +55,7 @@ int main(int argc, char* argv[]) {
         // Cria thread para enviar heartbeat constantemente para todos os backups
         std::thread(send_heartbeat_to_backups, HEARTBEAT_PORT).detach();
 
-        // Cria thread para guardar sockets e IPs dos backups
+        // Cria thread para guardar metados dos backups
         int replica_fd = init_server(REPLICA_PORT, info.type);
         std::thread(listen_backup_to_connect, replica_fd).detach();
 
@@ -76,8 +76,10 @@ int main(int argc, char* argv[]) {
         
         info.type = ServerType::BACKUP;
         info.primary_ip = listen_for_primary_multicast(MULTICAST_PORT);
+        info.ip = get_local_ip();
 
         int backup_fd = init_server(REPLICA_PORT, info.type);
+        send_election_id_to_primary(backup_fd);
 
         // Cria uma nova thread para executar o "protocolo heartbeat"
         std::thread(listen_heartbeat_from_server, HEARTBEAT_PORT).detach();

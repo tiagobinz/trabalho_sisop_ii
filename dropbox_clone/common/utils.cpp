@@ -65,13 +65,16 @@ std::string read_file_content(const std::string& filepath) {
     return ss.str();
 }
 
-std::string join_backups_ip(std::vector<std::string> backups_ip) {
+std::string join_backups(const std::unordered_map<std::string, int>& backups) {
     std::string result;
-    for (size_t i = 0; i < backups_ip.size(); ++i) {
-        result += backups_ip[i];
-        if (i < backups_ip.size() - 1) {
+    bool first = true;
+
+    for (const auto& [ip, id] : backups) {
+        if (!first) {
             result += ",";
         }
+        result += ip + ":" + std::to_string(id);
+        first = false;
     }
     return result;
 }
