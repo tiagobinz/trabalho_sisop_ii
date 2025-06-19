@@ -22,6 +22,6 @@
 
 #include "service.hpp"
 
-std::string Election(std::unordered_map<std::string, int> backups);
+std::string bully_election(std::unordered_map<int, std::string> backups);
 
 #endif

@@ -29,7 +29,7 @@
 #define MULTICAST_GROUP         std::string("239.0.0.1")
 #define MULTICAST_DELAY         3
 #define MULTICAST_ATTEMPTS      5
-#define BACKUP_TIMEOUT          20
+#define BACKUP_TIMEOUT          15
 #define HEARTBEAT_DELAY         2
 #define HEARTBEAT_TIMEOUT       6
 
@@ -37,6 +37,7 @@
 #define MULTICAST_PORT          12346
 #define HEARTBEAT_PORT          12347
 #define REPLICA_PORT            12348
+#define ELECTION_PORT           12349
 
 typedef struct ClientInfo {
     std::string username;
@@ -55,7 +56,11 @@ typedef struct ServerInfo {
     std::string primary_ip;
     std::string ip;
     std::unordered_map<std::string, ClientInfo> clients;
-    std::unordered_map<std::string, int> backups;
+    std::unordered_map<int, std::string> backups;
+
+    // dados backups
+    int election_id;
+    bool election_started = false;
 
 } ServerInfo;
 
@@ -70,14 +75,16 @@ void listen_heartbeat_from_server(int port);
 
 void listen_backup_to_connect(int replication_fd);
 void listen_primary_for_replicas(int replication_fd);
-bool process_replica(std::string msg);
+bool handle_replica(std::string msg);
 
-std::string get_local_ip();
-std::string get_client_ip(int client_socket);
-
-size_t generate_random_election_id();
 void send_election_id_to_primary(int backup_fd);
 int receive_election_id_from_backup(int backup_socket, const std::string& ip_str);
+
+void check_user_directory(std::string username);
+
+
+void listen_election_from_backups(int& election_fd);
+void handle_election(std::string msg);
 
 void print_server_info();
 

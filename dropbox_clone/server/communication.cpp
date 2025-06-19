@@ -142,12 +142,7 @@ void handle_client(int client_socket) {
 
     // Cria diretório de usuário no servidor se ainda não existir
     std::string user_dir = username + "_sync_dir";
-    if (!std::filesystem::exists(user_dir)) {
-        std::filesystem::create_directory(user_dir);
-        std::cout << "[INFO] Diretório criado para usuário: " << user_dir << "\n";
-    } else {
-        std::cout << "[INFO] Diretório já existia: " << user_dir << "\n";
-    }
+    check_user_directory(user_dir);
 
     // Loop principal: recebe comandos
     while (true) {
@@ -407,6 +402,10 @@ int init_server(int port, ServerType t) {
         }
         std::cout << "[B] Conectado ao primário em " << info.primary_ip << ":" << port << "\n";
         return backup_fd;
+
+    } else {
+        std::cout << "[ERRO] Erro ao iniciar servidor" << "\n";
+        return -1;
     }
 }
 

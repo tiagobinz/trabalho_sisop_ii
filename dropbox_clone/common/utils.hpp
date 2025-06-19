@@ -36,6 +36,9 @@ void delete_file(const std::string& filepath);
 // Extração do conteúdo de um arquivo no formato de uma string
 std::string read_file_content(const std::string& filepath);
 
-std::string join_backups(const std::unordered_map<std::string, int>& backups);
+std::string join_backups(const std::unordered_map<int, std::string>& backups);
 
 bool recv_exact(int socket, void* buffer, size_t length);
+std::string get_local_ip();
+std::string get_client_ip(int client_socket);
+size_t generate_random_election_id();

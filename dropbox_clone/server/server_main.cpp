@@ -28,6 +28,7 @@
 #include "communication.hpp"
 #include "service.hpp"
 #include "../common/packet.hpp"
+#include "../common/utils.hpp"
 
 ServerInfo info;
 
@@ -42,7 +43,7 @@ int main(int argc, char* argv[]) {
 
     // SERVER PRIMÁRIO
     if (server_type == "-p") {
-        std::cout << "Iniciando servidor PRIMÁRIO na porta " << CLIENT_PORT << "\n";
+        std::cout << "[INFO] Iniciando servidor PRIMÁRIO na porta " << CLIENT_PORT << "\n";
         
         info.type = ServerType::PRIMARY;
         info.primary_ip = info.ip = get_local_ip();
@@ -72,23 +73,28 @@ int main(int argc, char* argv[]) {
 
     // SERVER BACKUP
     } else if (server_type == "-b") {
-        std::cout << "Iniciando servidor BACKUP na porta " << REPLICA_PORT << "\n";
+        std::cout << "[INFO] Iniciando servidor BACKUP na porta " << REPLICA_PORT << "\n";
         
         info.type = ServerType::BACKUP;
         info.primary_ip = listen_for_primary_multicast(MULTICAST_PORT);
         info.ip = get_local_ip();
-
-        int backup_fd = init_server(REPLICA_PORT, info.type);
-        send_election_id_to_primary(backup_fd);
+        info.election_id = generate_random_election_id();
 
         // Cria uma nova thread para executar o "protocolo heartbeat"
         std::thread(listen_heartbeat_from_server, HEARTBEAT_PORT).detach();
+
+        // Cria uma nova thread para escutar por mensagens de eleição
+        int election_fd = init_server(ELECTION_PORT, ServerType::PRIMARY);
+        std::thread(listen_election_from_backups, std::ref(election_fd)).detach();
+
+        int backup_fd = init_server(REPLICA_PORT, info.type);
+        send_election_id_to_primary(backup_fd);
 
         // Loop principal que recebe replicas do primário
         listen_primary_for_replicas(backup_fd);
         
     } else {
-        std::cerr << "Erro: tipo de servidor inválido. Use -p para primário ou -b para backup.\n";
+        std::cerr << "[ERRO] Tipo de servidor inválido. Use -p para primário ou -b para backup.\n";
         return 1;
     }
 

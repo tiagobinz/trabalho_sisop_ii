@@ -8,7 +8,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <algorithm>
-#include <random>
+#include <filesystem>
 
 #include "../common/utils.hpp"
 #include "service.hpp"
@@ -165,9 +165,9 @@ void listen_heartbeat_from_server(int port) {
         int elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_heartbeat).count();
         if (elapsed > HEARTBEAT_TIMEOUT) {
             std::cout << "[B] Servidor Primário falhou. Iniciando eleição...\n";
+            print_server_info();
 
-            // CHAMAR ALGORITMO DE ELEIÇÃO AQUI
-            std::string new_primary_ip = Election(info.backups);
+            std::string new_primary_ip = bully_election(info.backups);
 
             break;
         }
@@ -197,10 +197,10 @@ void listen_backup_to_connect(int replica_fd) {
 
             register_backup_socket(backup_socket);
             int election_id = receive_election_id_from_backup(backup_socket, ip_str);
-            info.backups[ip_str] = election_id;
+            info.backups[election_id] = std::string(ip_str);
 
             std::cout << "[P] Conexão com backup realizada:\n";
-            std::cout << "[INFO] IP: " << ip_str << " | election_id: " << info.backups[ip_str] << "\n";
+            std::cout << "[INFO] IP: " << info.backups[election_id] << " | election_id: " << election_id << "\n";
         } else {
             auto now = clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_connection_time).count();
@@ -240,14 +240,15 @@ void listen_primary_for_replicas(int replication_fd) {
             std::string msg = leftover.substr(0, pos);
             leftover.erase(0, pos + 1);  // Remove a mensagem processada
             if (!msg.empty()) {
-                process_replica(msg);
+                std::cout << "[INFO] Réplica recebida: " << msg << "\n";
+                handle_replica(msg);
             }
         }
     }
     close(replication_fd);
 }
 
-bool process_replica(std::string msg) {
+bool handle_replica(std::string msg) {
     std::istringstream ss(msg);
     std::string section, category, username, data;
         
@@ -281,7 +282,8 @@ bool process_replica(std::string msg) {
             
             } else if (field == "USERNAME") {
                 info.clients[username].username = value;
-                std::cout << "[INFO] Atualizado username de " << username << " para " << value << "\n";
+                std::string user_dir = value + "_sync_dir";
+                check_user_directory(user_dir);
             
             } else if (field == "SESSION_COUNT") {
                 try {
@@ -341,9 +343,13 @@ bool process_replica(std::string msg) {
             size_t sep = pair.find(':');
 
             if (sep != std::string::npos) {
-                std::string ip = pair.substr(0, sep);
-                int id = std::stoi(pair.substr(sep + 1));
-                info.backups[ip] = id;
+                std::string ip = pair.substr(sep + 1);
+                int id = std::stoi(pair.substr(0, sep));
+
+                // Guarda em backups apenas os metadados dos outros
+                if(!(id == info.election_id)) {
+                    info.backups[id] = ip;
+                }
             }
         }
         std::cout << "[INFO] IPs de servidores backup atualizados \n";
@@ -358,56 +364,10 @@ bool process_replica(std::string msg) {
     return updated;
 }
 
-std::string get_local_ip() {
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-
-    // Permitir reuso de endereço
-    int reuse = 1;
-    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (char*)&reuse, sizeof(reuse));
-
-    sockaddr_in dummy_addr{};
-    dummy_addr.sin_family = AF_INET;
-    dummy_addr.sin_port = htons(80);
-    inet_pton(AF_INET, "8.8.8.8", &dummy_addr.sin_addr);
-
-    connect(sock, (sockaddr*)&dummy_addr, sizeof(dummy_addr));
-
-    sockaddr_in local_addr{};
-    socklen_t addr_len = sizeof(local_addr);
-    getsockname(sock, (sockaddr*)&local_addr, &addr_len);
-
-    char ip_str[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &local_addr.sin_addr, ip_str, sizeof(ip_str));
-
-    close(sock);
-    return std::string(ip_str);
-}
-
-std::string get_client_ip(int client_socket) {
-    sockaddr_in client_addr;
-    socklen_t addr_len = sizeof(client_addr);
-
-    if (getpeername(client_socket, (sockaddr*)&client_addr, &addr_len) == 0) {
-        char client_ip[INET_ADDRSTRLEN];
-        if (inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN)) {
-            return std::string(client_ip);
-        }
-    }
-    return "UNKNOWN";
-}
-
-size_t generate_random_election_id() {
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<size_t> dist(1000, 999999);
-    return dist(gen);
-}
-
 void send_election_id_to_primary(int backup_fd) {
-    int id = generate_random_election_id();
-    std::string msg = "ELECTION_ID:" + std::to_string(id);
+    std::string msg = "ELECTION_ID:" + std::to_string(info.election_id);
     send(backup_fd, msg.c_str(), msg.size(), 0);
-    std::cout << "[B] Enviado election_id: " << id << " ao primário\n";
+    std::cout << "[B] Enviado election_id: " << info.election_id << " ao primário\n";
 }
 
 int receive_election_id_from_backup(int backup_socket, const std::string& ip_str) {
@@ -436,6 +396,51 @@ int receive_election_id_from_backup(int backup_socket, const std::string& ip_str
     return election_id;
 }
 
+void check_user_directory(std::string user_dir) {
+
+    if (!std::filesystem::exists(user_dir)) {
+        std::filesystem::create_directory(user_dir);
+        std::cout << "[INFO] Diretório criado para usuário: " << user_dir << "\n";
+    } else {
+        std::cout << "[INFO] Diretório já existia: " << user_dir << "\n";
+    }
+}
+
+void listen_election_from_backups(int& election_fd) {
+
+    while (true) {
+        sockaddr_in client_addr{};
+        socklen_t addrlen = sizeof(client_addr);
+        int client_fd = accept(election_fd, (sockaddr*)&client_addr, &addrlen);
+
+        if (client_fd >= 0) {
+            char buffer[128];
+            ssize_t len = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
+            if (len > 0) {
+                buffer[len] = '\0';
+                std::string msg(buffer);
+
+                handle_election(msg);
+            }
+            close(client_fd);
+        }
+    }
+    close(election_fd);
+}
+
+void handle_election(std::string msg) {
+    if (msg.rfind("ELECTION|", 0) == 0) {
+        std::string received_id_str = msg.substr(std::string("ELECTION|").length());
+        int received_id = std::stoi(received_id_str);
+
+        if (info.election_id > received_id) {
+            std::cout << "ID do emissor é menor. EU sou o VALENTÃO!!! \n";
+        } else {
+            std::cout << "ID do emissor é maior \n";
+        }
+    }
+}
+
 void print_server_info() {
     std::cout << "\n========== ESTADO DO SERVIDOR ==========\n";
 
@@ -447,20 +452,20 @@ void print_server_info() {
 
     std::cout << "IP do servidor primário: " << info.primary_ip << "\n";
 
-    // Mostrar IPs dos backups (válido apenas no primário)
-    if (info.type == ServerType::PRIMARY) {
+    if(info.backups.empty()) {
+        std::cout << "Nenhum backup conectado\n";
+    } else {
         std::cout << "Backups conectados (" << info.backups.size() << "):\n";
-        for (const auto& [ip, id] : info.backups) {
-            std::cout << " IP: " << ip << "\n";
-            std::cout << " ID: " << id << "\n";
+        for (const auto& [id, ip] : info.backups) {
+            std::cout << " ID: " << id << " | IP: " << ip << "\n";
         }
     }
 
-    std::cout << "\nClientes conectados (" << info.clients.size() << "):\n";
-
     if (info.clients.empty()) {
-        std::cout << "  Nenhum cliente conectado.\n";
+        std::cout << "  Nenhum cliente conectado\n";
     } else {
+        std::cout << "\nClientes conectados (" << info.clients.size() << "):\n";
+
         for (const auto& [username, client] : info.clients) {
             std::cout << "  Usuário: " << username << "\n";
             std::cout << "    IP: " << client.ip << "\n";
