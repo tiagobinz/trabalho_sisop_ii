@@ -14,7 +14,8 @@
 #include "service.hpp"
 #include "communication.hpp"
 #include "election.hpp"
-
+const int REPLICATION_PORT = 12346;
+const int SYNC_PORT = 12347;
 void multicast_primary_info(int multicast_port) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
 
@@ -41,7 +42,6 @@ void multicast_primary_info(int multicast_port) {
     }
     close(sock);
 }
-
 
 std::string listen_for_primary_multicast(int multicast_port) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -168,6 +168,19 @@ void listen_heartbeat_from_server(int port) {
 
             // CHAMAR ALGORITMO DE ELEIÇÃO AQUI
             std::string new_primary_ip = Election(info.backups);
+            
+            // Verificar se este servidor foi eleito como novo primário
+            std::string my_ip = get_local_ip();
+            if (new_primary_ip == my_ip) {
+                std::cout << "[ELEIÇÃO] Este servidor foi eleito como novo primário!\n";
+                promote_to_primary();
+            } else {
+                std::cout << "[ELEIÇÃO] Novo primário eleito: " << new_primary_ip << "\n";
+                // Atualizar informação do novo primário
+                info.primary_ip = new_primary_ip;
+                // Reconectar ao novo primário
+                reconnect_to_new_primary();
+            }
 
             break;
         }
@@ -229,6 +242,23 @@ void listen_primary_for_replicas(int replication_fd) {
         ssize_t len = recv(replication_fd, buffer, sizeof(buffer) - 1, 0);
         if (len <= 0) {
             std::cout << "[B] Conexão com primário encerrada.\n";
+            
+            // CHAMAR ALGORITMO DE ELEIÇÃO AQUI
+            std::string new_primary_ip = Election(info.backups);
+            
+            // Verificar se este servidor foi eleito como novo primário
+            std::string my_ip = get_local_ip();
+            if (new_primary_ip == my_ip) {
+                std::cout << "[ELEIÇÃO] Este servidor foi eleito como novo primário!\n";
+                promote_to_primary();
+            } else {
+                std::cout << "[ELEIÇÃO] Novo primário eleito: " << new_primary_ip << "\n";
+                // Atualizar informação do novo primário
+                info.primary_ip = new_primary_ip;
+                // Reconectar ao novo primário
+                reconnect_to_new_primary();
+            }
+            
             break;
         }
 
@@ -245,6 +275,307 @@ void listen_primary_for_replicas(int replication_fd) {
         }
     }
     close(replication_fd);
+}
+
+// Nova função para promover um backup a primário
+void promote_to_primary() {
+    std::cout << "[TRANSIÇÃO] Promovendo este servidor de BACKUP para PRIMÁRIO...\n";
+    
+    // Sincronizar estado com outros backups se necessário
+    synchronize_state_with_peers();
+    
+    // Alterar o tipo do servidor
+    info.type = ServerType::PRIMARY;
+    
+    // Atualizar o IP do primário para o IP local
+    info.primary_ip = get_local_ip();
+    
+    std::cout << "[TRANSIÇÃO] Servidor agora é PRIMÁRIO com IP: " << info.primary_ip << "\n";
+    
+    // Remover este servidor da lista de backups
+    info.backups.erase(info.primary_ip);
+    
+    // Aguardar um momento para estabilizar
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    
+    // Iniciar multicast para anunciar novo primário
+    std::thread multicast_thread([]{
+        multicast_primary_info(MULTICAST_PORT);
+    });
+    multicast_thread.detach();
+    
+    // Iniciar thread de heartbeat para os backups
+    std::thread heartbeat_thread([]{
+        send_heartbeat_to_backups(MULTICAST_PORT);
+    });
+    heartbeat_thread.detach();
+    
+    // Iniciar servidor para aceitar conexões de backups
+    start_primary_services();
+    
+    // Notificar clientes sobre mudança de primário (se necessário)
+    notify_clients_of_primary_change();
+    
+    std::cout << "[TRANSIÇÃO] Transição para PRIMÁRIO concluída!\n";
+}
+
+// Nova função para reconectar a um novo primário
+void reconnect_to_new_primary() {
+    std::cout << "[RECONEXÃO] Tentando reconectar ao novo primário: " << info.primary_ip << "\n";
+    
+    // Aguardar um pouco para o novo primário se estabelecer
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+    
+    // Tentar estabelecer conexão com o novo primário
+    int attempts = 0;
+    const int max_attempts = 5;
+    
+    while (attempts < max_attempts) {
+        try {
+            // Conectar ao novo primário para replicação
+            int replication_socket = connect_to_primary_for_replication();
+            if (replication_socket > 0) {
+                std::cout << "[RECONEXÃO] Conectado ao novo primário com sucesso!\n";
+                
+                // Iniciar thread para escutar replicações do novo primário
+                std::thread replication_thread([replication_socket]{
+                    listen_primary_for_replicas(replication_socket);
+                });
+                replication_thread.detach();
+                
+                // Iniciar thread para escutar heartbeats do novo primário
+                std::thread heartbeat_thread([]{
+                    listen_heartbeat_from_server(MULTICAST_PORT);
+                });
+                heartbeat_thread.detach();
+                
+                break;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[RECONEXÃO] Erro na tentativa " << (attempts + 1) << ": " << e.what() << "\n";
+        }
+        
+        attempts++;
+        if (attempts < max_attempts) {
+            std::cout << "[RECONEXÃO] Tentativa " << attempts << " falhou. Tentando novamente em 3 segundos...\n";
+            std::this_thread::sleep_for(std::chrono::seconds(3));
+        }
+    }
+    
+    if (attempts >= max_attempts) {
+        std::cerr << "[RECONEXÃO] Falha ao reconectar após " << max_attempts << " tentativas.\n";
+        // Aqui você pode decidir iniciar uma nova eleição ou tentar outras estratégias
+    }
+}
+
+// Nova função para conectar ao primário para replicação
+int connect_to_primary_for_replication() {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        throw std::runtime_error("Erro ao criar socket");
+    }
+
+    sockaddr_in primary_addr{};
+    primary_addr.sin_family = AF_INET;
+    primary_addr.sin_port = htons(REPLICATION_PORT);
+    inet_pton(AF_INET, info.primary_ip.c_str(), &primary_addr.sin_addr);
+
+    if (connect(sock, (sockaddr*)&primary_addr, sizeof(primary_addr)) < 0) {
+        close(sock);
+        throw std::runtime_error("Erro ao conectar ao primário");
+    }
+
+    return sock;
+}
+
+// Nova função para iniciar serviços quando promovido a primário
+void start_primary_services() {
+    std::cout << "[SERVIÇOS] Iniciando serviços do primário...\n";
+    
+    // Aqui você deve iniciar todos os serviços necessários para um primário:
+    // - Servidor para aceitar clientes
+    // - Servidor para aceitar backups
+    // - Qualquer outro serviço específico do seu sistema
+    
+    // Exemplo de inicialização de servidor para backups
+    std::thread backup_listener_thread([]{
+        int replica_fd = setup_backup_listener();
+        if (replica_fd > 0) {
+            listen_backup_to_connect(replica_fd);
+        }
+    });
+    backup_listener_thread.detach();
+}
+
+// Função auxiliar para configurar listener de backups
+int setup_backup_listener() {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        std::cerr << "[ERRO] Falha ao criar socket para backups\n";
+        return -1;
+    }
+
+    int reuse = 1;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(REPLICATION_PORT);
+    addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
+        std::cerr << "[ERRO] Falha no bind para backups\n";
+        close(sock);
+        return -1;
+    }
+
+    if (listen(sock, 10) < 0) {
+        std::cerr << "[ERRO] Falha no listen para backups\n";
+        close(sock);
+        return -1;
+    }
+
+    std::cout << "[SERVIÇOS] Servidor de backups iniciado na porta " << REPLICATION_PORT << "\n";
+    return sock;
+}
+
+// Nova função para sincronizar estado com outros servidores
+void synchronize_state_with_peers() {
+    std::cout << "[SYNC] Sincronizando estado com outros servidores...\n";
+    
+    // Implementar lógica para garantir que este servidor tem o estado mais atualizado
+    // Pode envolver consultar outros backups ou usar timestamps das últimas operações
+    
+    // Exemplo de implementação:
+    for (const auto& [backup_ip, election_id] : info.backups) {
+        if (backup_ip != get_local_ip()) {
+            try {
+                request_state_from_backup(backup_ip);
+            } catch (const std::exception& e) {
+                std::cerr << "[SYNC] Erro ao sincronizar com " << backup_ip << ": " << e.what() << "\n";
+            }
+        }
+    }
+    
+    std::cout << "[SYNC] Sincronização de estado concluída\n";
+}
+
+// Função para solicitar estado de um backup específico
+void request_state_from_backup(const std::string& backup_ip) {
+    // Implementar conexão temporária com backup para solicitar estado
+    int sync_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sync_sock < 0) return;
+    
+    sockaddr_in backup_addr{};
+    backup_addr.sin_family = AF_INET;
+    backup_addr.sin_port = htons(SYNC_PORT); // Porta específica para sincronização
+    inet_pton(AF_INET, backup_ip.c_str(), &backup_addr.sin_addr);
+    
+    if (connect(sync_sock, (sockaddr*)&backup_addr, sizeof(backup_addr)) == 0) {
+        std::string sync_request = "STATE_REQUEST";
+        send(sync_sock, sync_request.c_str(), sync_request.size(), 0);
+        
+        // Receber e processar resposta de estado
+        char buffer[4096];
+        ssize_t len = recv(sync_sock, buffer, sizeof(buffer) - 1, 0);
+        if (len > 0) {
+            buffer[len] = '\0';
+            process_state_sync_response(std::string(buffer));
+        }
+    }
+    
+    close(sync_sock);
+}
+
+// Função para processar resposta de sincronização
+void process_state_sync_response(const std::string& response) {
+    // Implementar lógica para processar estado recebido
+    // e atualizar info.clients se necessário
+    std::cout << "[SYNC] Processando resposta de sincronização\n";
+}
+
+// Função para notificar clientes sobre mudança de primário
+void notify_clients_of_primary_change() {
+    std::cout << "[NOTIFY] Notificando clientes sobre mudança de primário...\n";
+    
+    std::string notification = "PRIMARY_CHANGED:" + info.primary_ip;
+    
+    // Enviar notificação para todos os clientes conectados
+    for (const auto& [username, client] : info.clients) {
+        for (int socket : client.sockets) {
+            send(socket, notification.c_str(), notification.size(), 0);
+        }
+    }
+    
+    std::cout << "[NOTIFY] Notificação enviada para " << info.clients.size() << " clientes\n";
+}
+
+// Função para tratar eleições concorrentes (split-brain prevention)
+bool handle_concurrent_elections() {
+    std::cout << "[ELEIÇÃO] Verificando eleições concorrentes...\n";
+    
+    // Implementar lógica para detectar se há múltiplos primários
+    // Pode usar heartbeats ou consultas diretas
+    
+    std::vector<std::string> active_primaries;
+    
+    // Verificar se há outros servidores se anunciando como primário
+    for (const auto& [backup_ip, election_id] : info.backups) {
+        if (is_server_claiming_primary(backup_ip)) {
+            active_primaries.push_back(backup_ip);
+        }
+    }
+    
+    if (active_primaries.size() > 1) {
+        std::cout << "[ELEIÇÃO] Detectadas eleições concorrentes! Resolvendo...\n";
+        
+        // Resolver usando IDs de eleição ou timestamps
+        std::string actual_primary = resolve_primary_conflict(active_primaries);
+        
+        if (actual_primary != get_local_ip()) {
+            std::cout << "[ELEIÇÃO] Cedendo primário para " << actual_primary << "\n";
+            // Voltar para modo backup
+            demote_to_backup(actual_primary);
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+// Função para verificar se um servidor está se anunciando como primário
+bool is_server_claiming_primary(const std::string& server_ip) {
+    // Implementar verificação (pode ser via multicast ou conexão direta)
+    return false; // Placeholder
+}
+
+// Função para resolver conflito entre múltiplos primários
+std::string resolve_primary_conflict(const std::vector<std::string>& candidates) {
+    // Implementar lógica de desempate (maior ID de eleição, menor IP, etc.)
+    return candidates.empty() ? "" : candidates[0]; // Placeholder
+}
+
+// Função para rebaixar servidor de primário para backup
+void demote_to_backup(const std::string& new_primary_ip) {
+    std::cout << "[TRANSIÇÃO] Rebaixando de PRIMÁRIO para BACKUP...\n";
+    
+    // Parar serviços de primário
+    stop_primary_services();
+    
+    // Alterar tipo para backup
+    info.type = ServerType::BACKUP;
+    info.primary_ip = new_primary_ip;
+    
+    // Reconectar ao novo primário
+    reconnect_to_new_primary();
+    
+    std::cout << "[TRANSIÇÃO] Transição para BACKUP concluída\n";
+}
+
+// Função para parar serviços de primário
+void stop_primary_services() {
+    std::cout << "[SERVIÇOS] Parando serviços de primário...\n";
+    // Implementar lógica para parar threads e fechar sockets
 }
 
 bool process_replica(std::string msg) {
