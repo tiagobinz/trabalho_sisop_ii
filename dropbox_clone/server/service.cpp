@@ -468,10 +468,13 @@ bool handle_election(int election_socket) {
     if (msg.rfind("ELECTION|", 0) == 0) {
         int received_id = std::stoi(msg.substr(9));
 
-        std::cout << "[E] Recebida ELECTION de ID " << received_id << "\n";
+        std::cout << "[E] Recebida ELECTION de ID: " << received_id << "\n";
 
         std::string answer_msg = "ANSWER|" + std::to_string(info.election_id);
+        
         send(election_socket, answer_msg.c_str(), answer_msg.size(), 0);
+
+        std::cout << "[E] Enviada ANSWER para ID: " << received_id << "\n";
 
         // Iniciar minha própria eleição
         if (!election_state.election_in_progress) {
@@ -482,13 +485,15 @@ bool handle_election(int election_socket) {
 
     // Novo primário foi eleito
     } else if (msg.rfind("COORDINATOR|", 0) == 0) {
-        std::lock_guard<std::mutex> lock(election_state.election_mutex);
         
-        info.election_started = false;
-        election_state.election_in_progress = false;
-        
+        { std::lock_guard<std::mutex> lock(election_state.election_mutex);
+            info.election_started = false;
+            election_state.election_in_progress = false;
+        }
+
         int new_primary_id = std::stoi(msg.substr(12));
 
+        std::cout << "[E] Recebida COORDINATOR do Backup de ID: " << new_primary_id << "\n";
         std::cout << "[E] *** NOVO PRIMÁRIO ELEITO: ID " << new_primary_id << " | IP: " << info.backups[new_primary_id] << " ***\n";
 
         info.primary_ip = info.backups[new_primary_id];
@@ -501,7 +506,7 @@ bool handle_election(int election_socket) {
         std::lock_guard<std::mutex> lock(election_state.election_mutex);
 
         int id = std::stoi(msg.substr(7));
-        std::cout << "[E] Recebido ANSWER de ID " << id << " (maior que " << info.election_id << ")\n";
+        std::cout << "[E] Recebido ANSWER de ID " << id << "\n";
         
         election_state.answer_received = true;
     }
