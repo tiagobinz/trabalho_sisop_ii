@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <functional>
 
 /*
  * server/service.hpp
@@ -80,12 +81,14 @@ bool handle_replica(std::string msg);
 
 void send_election_id_to_primary(int backup_fd);
 int receive_election_id_from_backup(int backup_socket, const std::string& ip_str);
+void election_listener();
+bool handle_election(int election_socket, std::function<void()> on_election_end);
 
 void check_user_directory(std::string username);
 
-void election_listener();
-bool handle_election(int election_socket);
-
 void print_server_info();
+
+void init_primary_services();
+void init_backup_services();
 
 #endif

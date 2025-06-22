@@ -106,7 +106,7 @@ void send_heartbeat_to_backups(int multicast_port) {
     while (true) {
         sendto(sock, heartbeat_msg.c_str(), heartbeat_msg.size(), 0,
                (sockaddr*)&multicast_addr, sizeof(multicast_addr));
-        //std::cout << "[P] Heartbeat enviado aos backups\n";
+        std::cout << "[P] Heartbeat enviado aos backups\n";
         std::this_thread::sleep_for(std::chrono::seconds(HEARTBEAT_DELAY));
     }
 
@@ -157,7 +157,7 @@ void listen_heartbeat_from_server(int port) {
             std::string msg(buffer);
             if (msg == "HEARTBEAT") {
                 last_heartbeat = std::chrono::steady_clock::now();
-                //std::cout << "[B] Heartbeat recebido!\n";
+                std::cout << "[B] Heartbeat recebido!\n";
             }
         }
 
@@ -247,7 +247,7 @@ void listen_primary_for_replicas(int replication_fd) {
             std::string msg = leftover.substr(0, pos);
             leftover.erase(0, pos + 1);  // Remove a mensagem processada
             if (!msg.empty()) {
-                //std::cout << "[INFO] Réplica recebida: " << msg << "\n";
+                
                 handle_replica(msg);
             }
         }
@@ -417,16 +417,6 @@ int receive_election_id_from_backup(int backup_socket, const std::string& ip_str
     return election_id;
 }
 
-void check_user_directory(std::string user_dir) {
-
-    if (!std::filesystem::exists(user_dir)) {
-        std::filesystem::create_directory(user_dir);
-        std::cout << "[INFO] Diretório criado para usuário: " << user_dir << "\n";
-    } else {
-        std::cout << "[INFO] Diretório já existia: " << user_dir << "\n";
-    }
-}
-
 void election_listener() {
 
     // Fica aguardando até receber do primário os dados dos backups
@@ -445,12 +435,16 @@ void election_listener() {
         int election_socket = accept(backup_fd, (sockaddr*)&backup_addr, &addrlen);
         
         // Cria uma nova thread para tratar as mensagens de eleição
-        std::thread(handle_election, election_socket).detach();
+        std::thread ([election_socket] {
+            handle_election(election_socket, [] {
+                // Callback true que vem quando recebe COORDINATOR
+                init_backup_services();
+            });
+        }).detach();
     }
-
 }
 
-bool handle_election(int election_socket) {
+bool handle_election(int election_socket, std::function<void()> on_election_end) {
 
     // Receber a mensagem que vier de election_socket
     char buffer[256];
@@ -489,16 +483,21 @@ bool handle_election(int election_socket) {
         { std::lock_guard<std::mutex> lock(election_state.election_mutex);
             info.election_started = false;
             election_state.election_in_progress = false;
+            info.backup_replicas_received = false;
         }
 
         int new_primary_id = std::stoi(msg.substr(12));
-
-        std::cout << "[E] Recebida COORDINATOR do Backup de ID: " << new_primary_id << "\n";
-        std::cout << "[E] *** NOVO PRIMÁRIO ELEITO: ID " << new_primary_id << " | IP: " << info.backups[new_primary_id] << " ***\n";
-
         info.primary_ip = info.backups[new_primary_id];
-
         close(election_socket);
+
+        for (auto& [id, ip] : info.backups) {
+            if(id == info.election_id) {
+                info.backups[id].erase();
+            }
+        }
+        std::cout << "[E] *** NOVO PRIMÁRIO ELEITO: ID " << new_primary_id << " | IP: " << info.backups[new_primary_id] << " ***\n\n";
+        
+        on_election_end();
         return true;
 
     // Recebeu resposta de um servidor com ID maior
@@ -512,6 +511,16 @@ bool handle_election(int election_socket) {
     }
 
     return false;
+}
+
+void check_user_directory(std::string user_dir) {
+
+    if (!std::filesystem::exists(user_dir)) {
+        std::filesystem::create_directory(user_dir);
+        std::cout << "[INFO] Diretório criado para usuário: " << user_dir << "\n";
+    } else {
+        std::cout << "[INFO] Diretório já existia: " << user_dir << "\n";
+    }
 }
 
 void print_server_info() {
@@ -555,4 +564,43 @@ void print_server_info() {
         }
     }
     std::cout << "========================================\n\n";
+}
+
+void init_primary_services() {
+    int server_fd = init_server(CLIENT_PORT, info.type);
+
+    // Cria uma nova thread para realizar alguns Multicasts UDP e avisar aos backups o endereço primário
+    std::thread(multicast_primary_info, MULTICAST_PORT).detach();
+
+    // Cria thread para enviar heartbeat constantemente para todos os backups
+    std::thread(send_heartbeat_to_backups, HEARTBEAT_PORT).detach();
+
+    // Cria thread para guardar metados dos backups
+    int replica_fd = init_server(REPLICA_PORT, info.type);
+    std::thread(listen_backup_to_connect, replica_fd).detach();
+
+    // Loop principal que aceita conexões de clientes
+    while (true) {
+        // Cria socket para o cliente
+        sockaddr_in client_addr{};
+        socklen_t addrlen = sizeof(client_addr);
+        int client_socket = accept(server_fd, (sockaddr*)&client_addr, &addrlen);
+
+        // Cria uma nova thread para tratar o cliente de forma concorrente
+        std::thread(handle_client, client_socket).detach();
+    }
+}
+
+void init_backup_services() {
+    // Cria uma nova thread para executar o "protocolo heartbeat"
+    std::thread(listen_heartbeat_from_server, HEARTBEAT_PORT).detach();
+
+    // Cria uma nova thread para escutar por mensagens de eleição
+    std::thread(election_listener).detach();
+
+    int backup_fd = init_server(REPLICA_PORT, info.type);
+    send_election_id_to_primary(backup_fd);
+
+    // Loop principal que recebe replicas do primário
+    listen_primary_for_replicas(backup_fd);
 }

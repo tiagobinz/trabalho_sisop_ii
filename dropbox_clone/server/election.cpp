@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "election.hpp"
+#include "communication.hpp"
 #include "../common/utils.hpp"
 
 ElectionState election_state;
@@ -95,6 +96,7 @@ void become_primary(int this_id, const std::unordered_map<int, std::string>& bac
     { std::lock_guard<std::mutex> lock(election_state.election_mutex);
         info.election_started = false;
         election_state.election_in_progress = false;
+        election_state.answer_received = false;
     }
 
     // Envia COORDINATOR para todos os backups
@@ -121,12 +123,18 @@ void become_primary(int this_id, const std::unordered_map<int, std::string>& bac
     }
 
     // Atualiza dados internos
+    
     info.primary_ip = info.backups[this_id];
     info.type = ServerType::PRIMARY;
-    
-    std::cout << "[E] *** AGORA SOU O SERVIDOR PRIMÁRIO! ***\n";
+    info.backup_replicas_received = false;
+    clear_backup_sockets();
+    info.backups.clear();
+
+    std::cout << "[E] *** AGORA SOU O SERVIDOR PRIMÁRIO! ***\n\n";
 
     // Iniciar as rotinas do primário
+    init_primary_services();
+
     // Reestabelecer conexão com info.clients
 
 }

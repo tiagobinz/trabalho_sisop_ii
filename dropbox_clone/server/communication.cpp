@@ -32,6 +32,11 @@ void register_backup_socket(int backup_socket) {
     backup_sockets.push_back(backup_socket);
 }
 
+void clear_backup_sockets() {
+    std::lock_guard<std::mutex> lock(backup_mutex);
+    backup_sockets.clear();
+}
+
 // Evitar race conditions quando duas threads tentam escrever o mesmo arquivo no servidor
 std::unordered_map<std::string, std::mutex> user_file_mutex;
 std::mutex file_mutex_map_guard;
@@ -363,6 +368,10 @@ int init_server(int port, ServerType t) {
         // Criação do socket TCP (aceitar clientes)
         int server_fd = socket(AF_INET, SOCK_STREAM, 0);
 
+        // Permitir reuso de endereço
+        int reuse = 1;
+        setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, (char*)&reuse, sizeof(reuse));
+
         // Define as configurações do endereço (porta e IP)
         sockaddr_in address{};
         address.sin_family = AF_INET;
@@ -374,7 +383,6 @@ int init_server(int port, ServerType t) {
 
         // Inicia o modo de escuta por conexões
         listen(server_fd, 10);
-        //std::cout << "[*] Servidor ouvindo na porta " << port << "...\n";
         return server_fd;
 
     } else if (t == ServerType::BACKUP) {

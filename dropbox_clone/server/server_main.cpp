@@ -48,28 +48,7 @@ int main(int argc, char* argv[]) {
         info.type = ServerType::PRIMARY;
         info.primary_ip = info.ip = get_local_ip();
 
-        int server_fd = init_server(CLIENT_PORT, info.type);
-
-        // Cria uma nova thread para realizar alguns Multicasts UDP e avisar aos backups o endereço primário
-        std::thread(multicast_primary_info, MULTICAST_PORT).detach();
-
-        // Cria thread para enviar heartbeat constantemente para todos os backups
-        std::thread(send_heartbeat_to_backups, HEARTBEAT_PORT).detach();
-
-        // Cria thread para guardar metados dos backups
-        int replica_fd = init_server(REPLICA_PORT, info.type);
-        std::thread(listen_backup_to_connect, replica_fd).detach();
-
-        // Loop principal que aceita conexões de clientes
-        while (true) {
-            // Cria socket para o cliente
-            sockaddr_in client_addr{};
-            socklen_t addrlen = sizeof(client_addr);
-            int client_socket = accept(server_fd, (sockaddr*)&client_addr, &addrlen);
-
-            // Cria uma nova thread para tratar o cliente de forma concorrente
-            std::thread(handle_client, client_socket).detach();
-        }
+        init_primary_services();
 
     // SERVER BACKUP
     } else if (server_type == "-b") {
@@ -80,17 +59,7 @@ int main(int argc, char* argv[]) {
         info.ip = get_local_ip();
         info.election_id = generate_random_election_id();
 
-        // Cria uma nova thread para executar o "protocolo heartbeat"
-        std::thread(listen_heartbeat_from_server, HEARTBEAT_PORT).detach();
-
-        // Cria uma nova thread para escutar por mensagens de eleição
-        std::thread(election_listener).detach();
-
-        int backup_fd = init_server(REPLICA_PORT, info.type);
-        send_election_id_to_primary(backup_fd);
-
-        // Loop principal que recebe replicas do primário
-        listen_primary_for_replicas(backup_fd);
+        init_backup_services();
         
     } else {
         std::cerr << "[ERRO] Tipo de servidor inválido. Use -p para primário ou -b para backup.\n";
