@@ -42,3 +42,4 @@ bool recv_exact(int socket, void* buffer, size_t length);
 std::string get_local_ip();
 std::string get_client_ip(int client_socket);
 size_t generate_random_election_id();
+int get_port_by_id(int id);

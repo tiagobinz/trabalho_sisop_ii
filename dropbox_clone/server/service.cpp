@@ -106,7 +106,7 @@ void send_heartbeat_to_backups(int multicast_port) {
     while (true) {
         sendto(sock, heartbeat_msg.c_str(), heartbeat_msg.size(), 0,
                (sockaddr*)&multicast_addr, sizeof(multicast_addr));
-        std::cout << "[P] Heartbeat enviado aos backups\n";
+        //std::cout << "[P] Heartbeat enviado aos backups\n";
         std::this_thread::sleep_for(std::chrono::seconds(HEARTBEAT_DELAY));
     }
 
@@ -157,18 +157,25 @@ void listen_heartbeat_from_server(int port) {
             std::string msg(buffer);
             if (msg == "HEARTBEAT") {
                 last_heartbeat = std::chrono::steady_clock::now();
-                std::cout << "[B] Heartbeat recebido!\n";
+                //std::cout << "[B] Heartbeat recebido!\n";
             }
         }
 
         auto now = std::chrono::steady_clock::now();
         int elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_heartbeat).count();
         if (elapsed > HEARTBEAT_TIMEOUT) {
-            std::cout << "[B] Servidor Primário falhou. Iniciando eleição...\n";
-            print_server_info();
 
-            std::string new_primary_ip = bully_election(info.backups);
-
+            if (!info.backups.empty()) {
+                int min_id = std::numeric_limits<int>::max();
+                for (const auto& [id, _] : info.backups) {
+                    min_id = std::min(min_id, id);
+                }
+            
+                if (info.election_id < min_id) {
+                    std::cout << "[INFO] Primário falhou. Iniciando eleição...\n";
+                    start_election(info.backups);
+                }
+            }
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -240,7 +247,7 @@ void listen_primary_for_replicas(int replication_fd) {
             std::string msg = leftover.substr(0, pos);
             leftover.erase(0, pos + 1);  // Remove a mensagem processada
             if (!msg.empty()) {
-                std::cout << "[INFO] Réplica recebida: " << msg << "\n";
+                //std::cout << "[INFO] Réplica recebida: " << msg << "\n";
                 handle_replica(msg);
             }
         }
@@ -334,33 +341,47 @@ bool handle_replica(std::string msg) {
         }
 
     } else if (section == "SERVER_INFO" && category == "BACKUPS") {
-        info.backups.clear(); // reseta para evitar duplicatas
+        //info.backups.clear(); // reseta para evitar duplicatas
 
-        std::stringstream ss(data);
+        std::stringstream ss(username);
         std::string pair;
 
+        int count = 0;
         while (std::getline(ss, pair, ',')) {
+            if (pair.empty()) continue;
+
             size_t sep = pair.find(':');
+            if (sep == std::string::npos) {
+                std::cerr << "[DEBUG] Par inválido (faltando ':'): " << pair << "\n";
+                continue;
+            }
 
-            if (sep != std::string::npos) {
-                std::string ip = pair.substr(sep + 1);
-                int id = std::stoi(pair.substr(0, sep));
+            std::string id_str = pair.substr(0, sep);
+            std::string ip = pair.substr(sep + 1);
 
-                // Guarda em backups apenas os metadados dos outros
+            try {
+                int id = std::stoi(id_str);
+
                 if(!(id == info.election_id)) {
                     info.backups[id] = ip;
+                    std::cout << "[INFO] Backup ID: " << id << " | IP: " << ip << " adicionado.\n";
+                    count++;
+                } else {
+                    std::cout << "[DEBUG] ID " << id << " não adicionado\n";
                 }
+            } catch (const std::exception& e) {
+                std::cerr << "[ERRO] ID inválido no par: " << pair << " (" << e.what() << ")\n";
             }
         }
-        std::cout << "[INFO] IPs de servidores backup atualizados \n";
 
-        updated = true;
-
-    } else {
-        std::cerr << "[ERRO] Campo desconhecido: " << section << "\n";
-        return false;
+        if (count > 0) {
+            std::cout << "[INFO] IPs de servidores backup atualizados. Total: " << count << "\n";
+            updated = true;
+            info.backup_replicas_received = true;
+        } else {
+            std::cerr << "[ERRO] Nenhum backup válido foi adicionado a partir de: " << username << "\n";
+        }
     }
-
     return updated;
 }
 
@@ -406,39 +427,86 @@ void check_user_directory(std::string user_dir) {
     }
 }
 
-void listen_election_from_backups(int& election_fd) {
+void election_listener() {
 
-    while (true) {
-        sockaddr_in client_addr{};
-        socklen_t addrlen = sizeof(client_addr);
-        int client_fd = accept(election_fd, (sockaddr*)&client_addr, &addrlen);
-
-        if (client_fd >= 0) {
-            char buffer[128];
-            ssize_t len = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
-            if (len > 0) {
-                buffer[len] = '\0';
-                std::string msg(buffer);
-
-                handle_election(msg);
-            }
-            close(client_fd);
-        }
+    // Fica aguardando até receber do primário os dados dos backups
+    while (!info.backup_replicas_received) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
-    close(election_fd);
+
+    int backup_fd = init_server(get_port_by_id(info.election_id), ServerType::PRIMARY);
+    std::cout << "[E] Servidor ID " << info.election_id << " escutando na porta " << get_port_by_id(info.election_id) << "\n";
+
+    while(true) {
+        // Cria socket para o backup
+        sockaddr_in backup_addr{};
+        socklen_t addrlen = sizeof(backup_addr);
+
+        int election_socket = accept(backup_fd, (sockaddr*)&backup_addr, &addrlen);
+        
+        // Cria uma nova thread para tratar as mensagens de eleição
+        std::thread(handle_election, election_socket).detach();
+    }
+
 }
 
-void handle_election(std::string msg) {
-    if (msg.rfind("ELECTION|", 0) == 0) {
-        std::string received_id_str = msg.substr(std::string("ELECTION|").length());
-        int received_id = std::stoi(received_id_str);
+bool handle_election(int election_socket) {
 
-        if (info.election_id > received_id) {
-            std::cout << "ID do emissor é menor. EU sou o VALENTÃO!!! \n";
-        } else {
-            std::cout << "ID do emissor é maior \n";
-        }
+    // Receber a mensagem que vier de election_socket
+    char buffer[256];
+    ssize_t len = recv(election_socket, buffer, sizeof(buffer) - 1, 0);
+    if (len <= 0) {
+        close(election_socket);
+        std::cerr << "[ERRO] Socket \n";
+        return false;
     }
+
+    buffer[len] = '\0';
+    std::string msg(buffer);
+
+    // Recebeu ELECTION de outro servidor
+    if (msg.rfind("ELECTION|", 0) == 0) {
+        int received_id = std::stoi(msg.substr(9));
+
+        std::cout << "[E] Recebida ELECTION de ID " << received_id << "\n";
+
+        std::string answer_msg = "ANSWER|" + std::to_string(info.election_id);
+        send(election_socket, answer_msg.c_str(), answer_msg.size(), 0);
+
+        // Iniciar minha própria eleição
+        if (!election_state.election_in_progress) {
+            std::thread([&] {
+                start_election(info.backups);
+            }).detach();
+        }
+
+    // Novo primário foi eleito
+    } else if (msg.rfind("COORDINATOR|", 0) == 0) {
+        std::lock_guard<std::mutex> lock(election_state.election_mutex);
+        
+        info.election_started = false;
+        election_state.election_in_progress = false;
+        
+        int new_primary_id = std::stoi(msg.substr(12));
+
+        std::cout << "[E] *** NOVO PRIMÁRIO ELEITO: ID " << new_primary_id << " | IP: " << info.backups[new_primary_id] << " ***\n";
+
+        info.primary_ip = info.backups[new_primary_id];
+
+        close(election_socket);
+        return true;
+
+    // Recebeu resposta de um servidor com ID maior
+    } else if (msg.rfind("ANSWER|", 0) == 0) {
+        std::lock_guard<std::mutex> lock(election_state.election_mutex);
+
+        int id = std::stoi(msg.substr(7));
+        std::cout << "[E] Recebido ANSWER de ID " << id << " (maior que " << info.election_id << ")\n";
+        
+        election_state.answer_received = true;
+    }
+
+    return false;
 }
 
 void print_server_info() {

@@ -84,8 +84,7 @@ int main(int argc, char* argv[]) {
         std::thread(listen_heartbeat_from_server, HEARTBEAT_PORT).detach();
 
         // Cria uma nova thread para escutar por mensagens de eleição
-        int election_fd = init_server(ELECTION_PORT, ServerType::PRIMARY);
-        std::thread(listen_election_from_backups, std::ref(election_fd)).detach();
+        std::thread(election_listener).detach();
 
         int backup_fd = init_server(REPLICA_PORT, info.type);
         send_election_id_to_primary(backup_fd);

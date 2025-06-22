@@ -138,3 +138,8 @@ size_t generate_random_election_id() {
     std::uniform_int_distribution<size_t> dist(1000, 999999);
     return dist(gen);
 }
+
+int get_port_by_id(int id) {
+    int base_port = 8000;
+    return base_port + (id % 1000);
+}

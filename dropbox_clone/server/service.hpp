@@ -29,7 +29,7 @@
 #define MULTICAST_GROUP         std::string("239.0.0.1")
 #define MULTICAST_DELAY         3
 #define MULTICAST_ATTEMPTS      5
-#define BACKUP_TIMEOUT          15
+#define BACKUP_TIMEOUT          10
 #define HEARTBEAT_DELAY         2
 #define HEARTBEAT_TIMEOUT       6
 
@@ -61,6 +61,7 @@ typedef struct ServerInfo {
     // dados backups
     int election_id;
     bool election_started = false;
+    bool backup_replicas_received = false;
 
 } ServerInfo;
 
@@ -82,9 +83,8 @@ int receive_election_id_from_backup(int backup_socket, const std::string& ip_str
 
 void check_user_directory(std::string username);
 
-
-void listen_election_from_backups(int& election_fd);
-void handle_election(std::string msg);
+void election_listener();
+bool handle_election(int election_socket);
 
 void print_server_info();
 

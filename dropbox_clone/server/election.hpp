@@ -17,11 +17,26 @@
 #ifndef ELECTION_HPP
 #define ELECTION_HPP
 
-#include <string>
-#include <vector>
+#include <atomic>
+#include <mutex>
 
 #include "service.hpp"
 
-std::string bully_election(std::unordered_map<int, std::string> backups);
+#define ELECTION_ANSWER_TIMEOUT 10000
+#define ELECTION_COORD_TIMEOUT  5000
+#define ELECTION_CHECK_DELAY    200
+
+typedef struct ElectionState {
+    std::atomic<bool> election_in_progress{false};
+    std::atomic<bool> answer_received{false};
+    std::mutex election_mutex;
+
+} ElectionState;
+
+extern ElectionState election_state;
+
+
+void start_election(const std::unordered_map<int, std::string>& backups);
+void become_primary(int this_id, const std::unordered_map<int, std::string>& backups);
 
 #endif

@@ -374,7 +374,7 @@ int init_server(int port, ServerType t) {
 
         // Inicia o modo de escuta por conexões
         listen(server_fd, 10);
-        std::cout << "[*] Servidor ouvindo na porta " << port << "...\n";
+        //std::cout << "[*] Servidor ouvindo na porta " << port << "...\n";
         return server_fd;
 
     } else if (t == ServerType::BACKUP) {
