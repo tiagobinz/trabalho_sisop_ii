@@ -171,10 +171,14 @@ void listen_heartbeat_from_server(int port) {
                     min_id = std::min(min_id, id);
                 }
             
-                if (info.election_id < min_id) {
+                if (info.election_id <= min_id) {
                     std::cout << "[INFO] Primário falhou. Iniciando eleição...\n";
                     start_election(info.backups);
                 }
+                
+            } else {
+                std::cout << "[INFO] Primário falhou. Iniciando eleição...\n";
+                start_election(info.backups);
             }
             break;
         }
@@ -278,16 +282,8 @@ bool handle_replica(std::string msg) {
         if (sep != std::string::npos) {
                 std::string field = data.substr(0, sep);
                 std::string value = data.substr(sep + 1);
-
-            if (field == "IP") {
-                info.clients[username].ip = value;
-                if (!value.empty()) {
-                    std::cout << "[INFO] Atualizado IP de " << username << " para " << value << "\n";
-                } else {
-                    std::cout << "[INFO] Removido IP de " << username << "\n";
-                }
             
-            } else if (field == "USERNAME") {
+            if (field == "USERNAME") {
                 info.clients[username].username = value;
                 std::string user_dir = value + "_sync_dir";
                 check_user_directory(user_dir);
@@ -302,33 +298,62 @@ bool handle_replica(std::string msg) {
                     return false;
                 }
 
-            } else if (field == "SOCKETS") {
+            } else if (field == "CONNECT") {
                 try {
-                    int socket_val = std::stoi(value);
-                    auto& user_sockets = info.clients[username].sockets;
-                    if (std::find(user_sockets.begin(), user_sockets.end(), socket_val) == user_sockets.end()) {
-                        user_sockets.push_back(socket_val);
-                        std::cout << "[INFO] Adicionado socket de " << username << ": " << socket_val << "\n";
-
-                    } else {
-                        std::cout << "[DEBUG] Socket " << socket_val << " de " << username << " já presente\n";
+                    // value deve estar no formato "<socket>:<ip>"
+                    size_t delim_pos = value.find(':');
+                    if (delim_pos == std::string::npos) {
+                        std::cerr << "[ERRO] Formato inválido em CONNECT: " << value << "\n";
+                        return false;
                     }
+                
+                    int socket_val = std::stoi(value.substr(0, delim_pos));
+                    std::string ip = value.substr(delim_pos + 1);
 
+                    auto& connections = info.clients[username].connections;
+
+                    // Verifica se o socket já está registrado
+                    auto it = std::find_if(connections.begin(), connections.end(),
+                        [socket_val](const std::pair<int, std::string>& conn) {
+                            return conn.first == socket_val;
+                        }
+                    );
+                
+                    if (it == connections.end()) {
+                        connections.emplace_back(socket_val, ip);
+                        std::cout << "[INFO] Adicionada conexão de " << username << ": socket=" << socket_val << ", ip=" << ip << "\n";
+                    } else {
+                        std::cout << "[DEBUG] Conexão já presente para " << username << ": socket=" << socket_val << "\n";
+                    }
+            
                 } catch (...) {
-                    std::cerr << "[ERRO] Erro ao converter socket: " << value << "\n";
+                    std::cerr << "[ERRO] Erro ao processar CONNECT: " << value << "\n";
                     return false;
                 }
 
-            } else if (field == "REMOVE_SOCKET") {
-                 try {
+            } else if (field == "REMOVE_CONNECT") {
+                try {
                     int socket_to_remove = std::stoi(value);
-                    auto& user_sockets = info.clients[username].sockets;
-                    user_sockets.erase(
-                        std::remove(user_sockets.begin(), user_sockets.end(), socket_to_remove),
-                        user_sockets.end()
+                    auto& connections = info.clients[username].connections;
+                
+                    size_t before = connections.size();
+                    connections.erase(
+                        std::remove_if(
+                            connections.begin(), connections.end(),
+                            [socket_to_remove](const std::pair<int, std::string>& conn) {
+                                return conn.first == socket_to_remove;
+                            }
+                        ),
+                        connections.end()
                     );
-                    std::cout << "[INFO] Removido socket de " << username << ": " << value << "\n";
-
+                    size_t after = connections.size();
+                
+                    if (after < before) {
+                        std::cout << "[INFO] Removida conexão (socket + IP) de " << username << ": socket " << socket_to_remove << "\n";
+                    } else {
+                        std::cout << "[DEBUG] Conexão com socket " << socket_to_remove << " não encontrada para " << username << "\n";
+                    }
+                
                 } catch (...) {
                     std::cerr << "[ERRO] Erro ao converter socket: " << value << "\n";
                     return false;
@@ -339,7 +364,7 @@ bool handle_replica(std::string msg) {
             }
             updated = true;
         }
-
+                
     } else if (section == "SERVER_INFO" && category == "BACKUPS") {
         //info.backups.clear(); // reseta para evitar duplicatas
 
@@ -513,59 +538,6 @@ bool handle_election(int election_socket, std::function<void()> on_election_end)
     return false;
 }
 
-void check_user_directory(std::string user_dir) {
-
-    if (!std::filesystem::exists(user_dir)) {
-        std::filesystem::create_directory(user_dir);
-        std::cout << "[INFO] Diretório criado para usuário: " << user_dir << "\n";
-    } else {
-        std::cout << "[INFO] Diretório já existia: " << user_dir << "\n";
-    }
-}
-
-void print_server_info() {
-    std::cout << "\n========== ESTADO DO SERVIDOR ==========\n";
-
-    std::cout << "Tipo: ";
-    switch (info.type) {
-        case ServerType::PRIMARY: std::cout << "PRIMÁRIO\n"; break;
-        case ServerType::BACKUP:  std::cout << "BACKUP\n"; break;
-    }
-
-    std::cout << "IP do servidor primário: " << info.primary_ip << "\n";
-
-    if(info.backups.empty()) {
-        std::cout << "Nenhum backup conectado\n";
-    } else {
-        std::cout << "Backups conectados (" << info.backups.size() << "):\n";
-        for (const auto& [id, ip] : info.backups) {
-            std::cout << " ID: " << id << " | IP: " << ip << "\n";
-        }
-    }
-
-    if (info.clients.empty()) {
-        std::cout << "  Nenhum cliente conectado\n";
-    } else {
-        std::cout << "\nClientes conectados (" << info.clients.size() << "):\n";
-
-        for (const auto& [username, client] : info.clients) {
-            std::cout << "  Usuário: " << username << "\n";
-            std::cout << "    IP: " << client.ip << "\n";
-            std::cout << "    Sessões ativas: " << client.session_count << "\n";
-            std::cout << "    Sockets: ";
-            if (client.sockets.empty()) {
-                std::cout << "Nenhum\n";
-            } else {
-                for (int s : client.sockets) {
-                    std::cout << s << " ";
-                }
-                std::cout << "\n";
-            }
-        }
-    }
-    std::cout << "========================================\n\n";
-}
-
 void init_primary_services() {
     int server_fd = init_server(CLIENT_PORT, info.type);
 
@@ -603,4 +575,86 @@ void init_backup_services() {
 
     // Loop principal que recebe replicas do primário
     listen_primary_for_replicas(backup_fd);
+}
+
+void notify_clients_of_new_primary(const ServerInfo& info) {
+    std::string msg = "NEW_PRIMARY|" + info.primary_ip;
+    std::cout << "[E] Notificando clientes sobre novo primário: " << msg << "\n";
+
+    for (const auto& [username, client] : info.clients) {
+        for (const auto& [_, client_ip] : client.connections) {
+
+            sockaddr_in client_addr{};
+            client_addr.sin_family = AF_INET;
+            client_addr.sin_port = htons(CLIENT_NOTIFY_PORT);
+            inet_pton(AF_INET, client_ip.c_str(), &client_addr.sin_addr);
+
+            int sock = socket(AF_INET, SOCK_STREAM, 0);
+            if (sock < 0) {
+                perror("[ERRO] socket");
+                continue;
+            }
+
+            if (connect(sock, (sockaddr*)&client_addr, sizeof(client_addr)) == 0) {
+                send(sock, msg.c_str(), msg.size(), 0);
+                std::cout << "[INFO] Notificado " << username << " em " << client_ip << "\n";
+            } else {
+                std::cerr << "[ERRO] Falha ao conectar no cliente " << username << " (" << client_ip << ")\n";
+            }
+            close(sock);
+        }
+    }
+}
+
+void check_user_directory(std::string user_dir) {
+
+    if (!std::filesystem::exists(user_dir)) {
+        std::filesystem::create_directory(user_dir);
+        std::cout << "[INFO] Diretório criado para usuário: " << user_dir << "\n";
+    } else {
+        std::cout << "[INFO] Diretório já existia: " << user_dir << "\n";
+    }
+}
+
+void print_server_info() {
+    std::cout << "\n========== ESTADO DO SERVIDOR ==========\n";
+
+    std::cout << "Tipo: ";
+    switch (info.type) {
+        case ServerType::PRIMARY: std::cout << "PRIMÁRIO\n"; break;
+        case ServerType::BACKUP:  std::cout << "BACKUP\n"; break;
+    }
+
+    std::cout << "IP do servidor primário: " << info.primary_ip << "\n";
+
+    if(info.backups.empty()) {
+        std::cout << "Nenhum backup conectado\n";
+    } else {
+        std::cout << "Backups conectados (" << info.backups.size() << "):\n";
+        for (const auto& [id, ip] : info.backups) {
+            std::cout << " ID: " << id << " | IP: " << ip << "\n";
+        }
+    }
+
+    if (info.clients.empty()) {
+        std::cout << "Nenhum cliente conectado\n";
+    } else {
+        std::cout << "\nClientes conectados (" << info.clients.size() << "):\n";
+
+        for (const auto& [username, client] : info.clients) {
+            std::cout << "  Usuário: " << username << "\n";
+            std::cout << "    Sessões ativas: " << client.session_count << "\n";
+            
+            if (client.connections.empty()) {
+                std::cout << "    Nenhuma conexão ativa\n";
+            } else {
+                std::cout << "    Conexões (socket, ip):\n";
+                for (const auto& [sock, ip] : client.connections) {
+                    std::cout << "      Socket: " << sock << " | IP: " << ip << "\n";
+                }
+            }
+        }
+    }
+
+    std::cout << "========================================\n\n";
 }

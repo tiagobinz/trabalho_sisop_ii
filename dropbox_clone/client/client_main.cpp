@@ -19,192 +19,196 @@
 #include <sstream>
 #include <fstream>
 #include <filesystem>
+#include <thread>
+#include <atomic>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+
 #include "communication.hpp"
 #include "sync_manager.hpp"
 #include "../common/packet.hpp"
 #include "../common/utils.hpp"
+
+#define CLIENT_PORT             12345
+#define CLIENT_NOTIFY_PORT      12350
 
 /*
  * client_main.cpp
  * Ponto de entrada da aplicação Cliente
  */
 
-// Loop principal do cliente, que recebe os comandos do usuário
 void command_loop(const std::string& username);
+bool reconnect_to_primary(const std::string& new_ip, const std::string& username);
+void server_listener();
 
-// Alterado para true após a execução de "get_sync_dir"
-static bool sync_started = false;
+std::atomic<bool> sync_started = false;
+std::atomic<bool> should_reconnect = false;
+std::string current_server_ip;
+std::string current_username;
 
 int main(int argc, char* argv[]) {
-    /*
-     * Um cliente deve poder estabelecer uma sessão com o servidor via linha de comando utilizando:
-     * ./myClient <username> <server_ip_address> <port>, onde:
-     * <username> representa o identificador do usuário
-     * <server_ip_address> representa o endereço IP do servidor
-     * <port> representa a porta
-     */
-    if (argc != 4) {
-        std::cerr << "Uso: ./myClient <username> <server_ip> <port>\n";
+    if (argc != 3) {
+        std::cerr << "Uso: ./myClient <username> <server_ip>\n";
         return 1;
     }
-    
-    // Extração dos argumentos
-    std::string username = argv[1];
-    std::string server_ip = argv[2];
-    int port = std::stoi(argv[3]);
 
-    // Impressão dos argumentos
-    std::cout << "username = " << username << std::endl;
-    std::cout << "server_ip = " << server_ip << std::endl;
-    std::cout << "port = " << port << std::endl;
+    // Extrai os argumentos
+    current_username = argv[1];
+    current_server_ip = argv[2];
 
-    // Conexão com servidor
-    if (!connect_to_server_TCP(server_ip, port)) {
-        std::cerr << "Erro ao conectar com o servidor.\n";
+    // Inicia a thread que escuta mudanças de primário
+    std::thread(server_listener).detach();
+
+    // Primeira tentativa de conexão
+    if (!connect_to_server_TCP(current_server_ip, CLIENT_PORT)) {
+        std::cerr << "[ERRO] Conexão inicial com o servidor falhou.\n";
         return 1;
     }
-    std::cout << "Conexão com servidor bem-sucedida.\n";
 
     // Envia pacote de login
-    Packet login_pkt = make_packet(CMD, 0, 0, username.size(), username);
+    Packet login_pkt = make_packet(CMD, 0, 0, current_username.size(), current_username);
     send_packet(login_pkt);
-    std::cout << "Login enviado: " << username << "\n";
+    std::cout << "[INFO] Login enviado: " << current_username << "\n";
 
-    // Espera resposta
+    // Aguarda resposta do servidor
     Packet response = receive_packet();
     std::string response_msg(response._payload, response.length);
 
-    // Checa se houve algum erro
     if (response_msg.rfind("ERRO", 0) == 0) {
         std::cerr << "[SERVIDOR] " << response_msg << "\n";
-        return 1; // Encerra execução com erro
-    }
-    else {
+        return 1;
+    } else {
         std::cout << "[SERVIDOR] " << response_msg << "\n";
     }
 
-    // executa get_sync_dir sempre no inicio
-    sync_started = get_sync_dir(username);
-    
+    sync_started = get_sync_dir(current_username);
     std::cout << "[INFO] Cliente pronto.\n";
 
-    // Começa a receber comandos do usuário
-    command_loop(username);
+    // Inicia o loop de comandos interativo
+    command_loop(current_username);
 
     return 0;
 }
 
-void command_loop(const std::string& username) {
-    std::string input;
+bool reconnect_to_primary(const std::string& new_ip, const std::string& username) {
+    //close(client_socket);  // Fecha conexão atual, se existir
+    std::cout << "[INFO] Tentando reconectar ao novo primário: " << new_ip << "\n";
+
+    if (!connect_to_server_TCP(new_ip, CLIENT_PORT)) {
+        std::cerr << "[ERRO] Falha na conexão TCP com novo primário.\n";
+        return false;
+    }
+
+    Packet login_pkt = make_packet(CMD, 0, 0, username.size(), username);
+    send_packet(login_pkt);
+
+    Packet response = receive_packet();
+    std::string response_msg(response._payload, response.length);
+
+    if (response_msg.rfind("ERRO", 0) == 0) {
+        std::cerr << "[SERVIDOR] " << response_msg << "\n";
+        return false;
+    }
+
+    std::cout << "[SERVIDOR] " << response_msg << "\n";
+    return true;
+}
+
+void server_listener() {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(CLIENT_NOTIFY_PORT);
+    addr.sin_addr.s_addr = INADDR_ANY;
+
+    bind(sock, (sockaddr*)&addr, sizeof(addr));
+    listen(sock, 5);
+
+    //std::cout << "[INFO] Aguardando notificações de novo primário...\n";
 
     while (true) {
+        sockaddr_in client_addr{};
+        socklen_t len = sizeof(client_addr);
+        int client_sock = accept(sock, (sockaddr*)&client_addr, &len);
 
+        char buffer[256];
+        ssize_t recv_len = recv(client_sock, buffer, sizeof(buffer) - 1, 0);
+        close(client_sock);  // Fechar assim que receber
+
+        if (recv_len <= 0) continue;
+
+        buffer[recv_len] = '\0';
+        std::string msg(buffer);
+
+        if (msg.rfind("NEW_PRIMARY|", 0) == 0) {
+            std::string new_ip = msg.substr(12);
+            std::cout << "[DEBUG] Novo primário informado: " << new_ip << "\n";
+
+            current_server_ip = new_ip;
+
+            if (reconnect_to_primary(current_server_ip, current_username)) {
+                std::cout << "[DEBUG] Reconexão com novo primário bem-sucedida.\n";
+            } else {
+                std::cerr << "[ERRO] Reconexão com novo primário falhou.\n";
+            }
+        } else {
+            std::cout << "[DEBUG] Mensagem inesperada: " << msg << "\n";
+        }
+    }
+}
+
+void command_loop(const std::string& username) {
+    std::string input;
+    while (true) {
         std::cout << "[INFO] Digite um comando:\n";
-
-        // Espera entrada de um comando
         std::getline(std::cin, input);
         std::istringstream iss(input);
-
-        // Extrai o nome do comando
-        std::string command, arg;
+        std::string command;
         iss >> command;
 
-        // Comando "exit"
-        if (command == "exit") {
-            std::cout << "Encerrando sessão...\n";
-            break;
-        }
-
-        // Comando "get_sync_dir"
+        if (command == "exit") break;
         else if (command == "get_sync_dir") {
-            // Cria sync_dir
             sync_started = get_sync_dir(username);
-
-            // Inicia a thread que recebe updates do servidor
             start_receiver_thread();
-
-            // Pede os arquivos existentes do servidor
-            std::string command = "GET_ALL_FILES";
-            Packet request = make_packet(CMD, 0, 0, command.size(), command);
-            send_packet(request);
+            send_packet(make_packet(CMD, 0, 0, 13, "GET_ALL_FILES"));
         }
-
-        // Outros comandos dependem de iniciar a sincronização antes
-        else if (sync_started) {
-            // Comando "list_client"
-            if (command == "list_client") {
-                list_files(get_client_sync_dir_path(), std::cout);
-            }
-
-            // Comando "upload"
-            else if (command == "upload") {
-                std::string path;
-                std::getline(iss, path);
-                path = path.substr(path.find_first_not_of(" \t"));
-            
-                if (path.empty()) {
-                    std::cout << "[ERRO] Especifique o caminho do arquivo para upload.\n";
-                    continue;
-                }
-            
-                upload_file(path, username);
-            }
-
-            // Comando "download"
-            else if (command == "download") {
-                std::string filename;
-                std::getline(iss, filename); // lê o resto da linha como um único argumento
-                filename = filename.substr(filename.find_first_not_of(" \t")); // remove espaços à esquerda
-            
-                if (filename.empty()) {
-                    std::cout << "[ERRO] Especifique o nome do arquivo para download.\n";
-                    continue;
-                }
-            
-                std::cout << "Vamos baixar " << filename << std::endl;
-                download_file(filename);
-            }
-
-            // Comando "delete"
-            else if (command == "delete") {
-                std::string filename;
-                std::getline(iss, filename);
-                filename = filename.substr(filename.find_first_not_of(" \t"));
-            
-                if (filename.empty()) {
-                    std::cout << "[ERRO] Especifique o nome do arquivo para deletar.\n";
-                    continue;
-                }
-                // Envia o comando de delete para o servidor referenciando o arquivo na pasta sync_dir de sincronização
-                filename=   "sync_dir/" + filename;
-                delete_file(filename);
-            }
-
-            // Comando "list_server"
-            else if (command == "list_server") {
-                // Envia pacote perguntando os arquivos do servidor
-                Packet pkt = make_packet(CMD, 0, 0, 0, "LIST_SERVER");
-                send_packet(pkt);
-                
-                // Recebe e imprime o resultado
-                Packet response = receive_packet();
-                std::string result(response._payload, response.length);
-                std::cout << result;
-            }
-
-            else if (command == "info") {
-                // Envia pacote pedindo para printar info do servidor
-                Packet pkt = make_packet(CMD, 0, 0, 0, "INFO");
-                send_packet(pkt);
-            }
-
-            // Comando inválido
-            else {
-                std::cout << "[ERRO] Comando não reconhecido.\n";
-            }
+        else if (!sync_started) {
+            std::cout << "[ERRO] Use get_sync_dir primeiro.\n";
+            continue;
         }
-        else {
-            std::cout << "[ERRO] Sincronização ainda não iniciada. Utilize o comando get_sync_dir.\n";
+        else if (command == "list_client") list_files(get_client_sync_dir_path(), std::cout);
+        else if (command == "upload") {
+            std::string path;
+            std::getline(iss, path);
+            path = path.substr(path.find_first_not_of(" \t"));
+            upload_file(path, username);
+        }
+        else if (command == "download") {
+            std::string filename;
+            std::getline(iss, filename);
+            filename = filename.substr(filename.find_first_not_of(" \t"));
+            download_file(filename);
+        }
+        else if (command == "delete") {
+            std::string filename;
+            std::getline(iss, filename);
+            filename = filename.substr(filename.find_first_not_of(" \t"));
+            delete_file("sync_dir/" + filename);
+        }
+        else if (command == "list_server") {
+            send_packet(make_packet(CMD, 0, 0, 12, "LIST_SERVER"));
+            Packet res = receive_packet();
+            std::string result(res._payload, res.length);
+            std::cout << result;
+
+        } else if (command == "info") {
+            // Envia pacote pedindo para printar info do servidor
+            Packet pkt = make_packet(CMD, 0, 0, 0, "INFO");
+                send_packet(pkt);
+
+        } else {
+            std::cout << "[ERRO] Comando inválido.\n";
         }
     }
 }

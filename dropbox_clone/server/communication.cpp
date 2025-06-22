@@ -94,10 +94,16 @@ void handle_client(int client_socket) {
     // Extrai o nome do usuário do payload
     std::string username(login_pkt._payload, login_pkt.length);
 
-    info.clients[username].ip = get_client_ip(client_socket);
-    replica_msg = "SERVER_INFO|CLIENTS|" + username + "|IP:" + info.clients[username].ip;
-    replicate_to_all_backups(replica_msg);
-    replica_msg.clear();
+    {
+        std::lock_guard<std::mutex> lock(socket_mutex);
+
+        std::string client_ip = get_client_ip(client_socket);
+        info.clients[username].connections.emplace_back(client_socket, client_ip);
+
+        replica_msg = "SERVER_INFO|CLIENTS|" + username + "|CONNECT:" + std::to_string(client_socket) + ":" + client_ip;
+        replicate_to_all_backups(replica_msg);
+        replica_msg.clear();
+    }
 
     if (info.clients[username].username.empty()) {
         info.clients[username].username = username;
@@ -109,7 +115,6 @@ void handle_client(int client_socket) {
     // Controle de no máximo 2 dispositivos conectados simultaneamente
     {
         std::lock_guard<std::mutex> lock(session_mutex);
-
         int& count = info.clients[username].session_count;
 
         if (count >= 2) {
@@ -128,16 +133,7 @@ void handle_client(int client_socket) {
         replica_msg.clear();
 
         std::cout << "[INFO] Sessões ativas para '" << username << "': " << count << "\n";
-    }
-
-    std::cout << "[+] Novo cliente conectado: " << username << "\n";
-    {
-        std::lock_guard<std::mutex> lock(socket_mutex);
-        info.clients[username].sockets.push_back(client_socket);
-
-        replica_msg = "SERVER_INFO|CLIENTS|" + username + "|SOCKETS:" + std::to_string(client_socket);
-        replicate_to_all_backups(replica_msg);
-        replica_msg.clear();
+        std::cout << "[+] Novo cliente conectado: " << username << "\n";
     }
 
     // Envia confirmação
@@ -189,9 +185,9 @@ void handle_client(int client_socket) {
             Packet pkt = make_packet(CMD, 0, 0, notification.size(), notification);
             {
                 std::lock_guard<std::mutex> lock(socket_mutex);
-                for (int sock : info.clients[username].sockets) {
-                    if (sock != client_socket) { // não envia de volta para quem enviou
-                        send(sock, &pkt, sizeof(Packet), 0);
+                for (const auto& [socket, _] : info.clients[username].connections) {
+                    if (socket != client_socket) { // não envia de volta para quem enviou
+                        send(socket, &pkt, sizeof(Packet), 0);
                     }
                 }
             }
@@ -258,9 +254,9 @@ void handle_client(int client_socket) {
                     std::string notification = "UPLOAD\n" + filename + "\n" + ts_str + "\n" + content;
                     {
                         std::lock_guard<std::mutex> lock(socket_mutex);
-                        for (int sock : info.clients[username].sockets) {
-                            if (sock != client_socket) { // não envia de volta para quem enviou
-                                send_large_payload(sock, CMD, notification);
+                        for (const auto& [socket, _] : info.clients[username].connections) {
+                            if (socket != client_socket) { // não envia de volta para quem enviou
+                                send_large_payload(socket, CMD, notification);
                             }
                         }
                     }
@@ -343,23 +339,20 @@ void handle_client(int client_socket) {
 
     {
         std::lock_guard<std::mutex> lock(socket_mutex);
-        auto& sockets = info.clients[username].sockets;
-        sockets.erase(
+        auto& connections = info.clients[username].connections;
+        connections.erase(
             std::remove_if(
-                sockets.begin(), sockets.end(),
-                [client_socket](int s) { return s == client_socket; }
+                connections.begin(), connections.end(),
+                [client_socket](const std::pair<int, std::string>& p) {
+                    return p.first == client_socket;
+                }
             ),
-            sockets.end()
+            connections.end()
         );
-
-        replica_msg = "SERVER_INFO|CLIENTS|" + username + "|REMOVE_SOCKET:" + std::to_string(client_socket);
-        replicate_to_all_backups(replica_msg);
-        replica_msg.clear();
-
-        replica_msg = "SERVER_INFO|CLIENTS|" + username + "|IP:";
-        replicate_to_all_backups(replica_msg);
-        replica_msg.clear();
     }
+        replica_msg = "SERVER_INFO|CLIENTS|" + username + "|REMOVE_CONNECT:" + std::to_string(client_socket);
+        replicate_to_all_backups(replica_msg);
+        replica_msg.clear();
 }
 
 int init_server(int port, ServerType t) {

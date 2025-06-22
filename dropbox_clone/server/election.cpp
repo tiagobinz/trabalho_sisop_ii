@@ -124,7 +124,7 @@ void become_primary(int this_id, const std::unordered_map<int, std::string>& bac
 
     // Atualiza dados internos
     
-    info.primary_ip = info.backups[this_id];
+    info.primary_ip = get_local_ip();
     info.type = ServerType::PRIMARY;
     info.backup_replicas_received = false;
     clear_backup_sockets();
@@ -132,9 +132,9 @@ void become_primary(int this_id, const std::unordered_map<int, std::string>& bac
 
     std::cout << "[E] *** AGORA SOU O SERVIDOR PRIMÁRIO! ***\n\n";
 
+    // Reestabelecer conexão com info.clients
+    notify_clients_of_new_primary(info);
+
     // Iniciar as rotinas do primário
     init_primary_services();
-
-    // Reestabelecer conexão com info.clients
-
 }

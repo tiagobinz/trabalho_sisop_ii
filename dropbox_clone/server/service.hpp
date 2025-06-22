@@ -39,12 +39,13 @@
 #define HEARTBEAT_PORT          12347
 #define REPLICA_PORT            12348
 #define ELECTION_PORT           12349
+#define CLIENT_NOTIFY_PORT      12350
 
 typedef struct ClientInfo {
     std::string username;
-    std::string ip = "";
     int session_count = 0;
     std::vector<int> sockets;
+    std::vector<std::pair<int,std::string>> connections;
 
 } ClientInfo;
 
@@ -84,11 +85,12 @@ int receive_election_id_from_backup(int backup_socket, const std::string& ip_str
 void election_listener();
 bool handle_election(int election_socket, std::function<void()> on_election_end);
 
+void init_primary_services();
+void init_backup_services();
+void notify_clients_of_new_primary(const ServerInfo& info);
+
 void check_user_directory(std::string username);
 
 void print_server_info();
-
-void init_primary_services();
-void init_backup_services();
 
 #endif
