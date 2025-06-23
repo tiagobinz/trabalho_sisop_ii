@@ -313,19 +313,6 @@ bool handle_replica(std::string msg, int backup_socket) {
                 std::ofstream file(filepath, std::ios::binary);
                 file << content;
                 file.close();
-
-                // // Atualiza o timestamp
-                // auto new_time = std::filesystem::file_time_type(std::chrono::seconds(ts_remote));
-                // std::filesystem::last_write_time(filepath, new_time);
-
-                // // Converte para time_t
-                // auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-                //                 new_time - std::filesystem::file_time_type::clock::now()
-                //                 + std::chrono::system_clock::now());
-
-                // std::time_t cftime = std::chrono::system_clock::to_time_t(sctp);
-
-                // std::cout << "last_write_time: " << std::put_time(std::localtime(&cftime), "%F %T") << "\n";
             }
             
             std::cout << "[SYNC] Arquivo salvo no servidor: " << filepath << "\n";
