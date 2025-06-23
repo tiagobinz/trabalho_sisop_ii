@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 
 #include "../common/utils.hpp"
 #include "service.hpp"
@@ -252,16 +253,18 @@ void listen_primary_for_replicas(int replication_fd) {
             leftover.erase(0, pos + 1);  // Remove a mensagem processada
             if (!msg.empty()) {
                 
-                handle_replica(msg);
+                handle_replica(msg, replication_fd);
             }
         }
     }
     close(replication_fd);
 }
 
-bool handle_replica(std::string msg) {
+bool handle_replica(std::string msg, int backup_socket) {
     std::istringstream ss(msg);
+    
     std::string section, category, username, data;
+    std::string payload = receive_full_payload(backup_socket);
         
     // Divide por '|'
     std::getline(ss, section, '|');
@@ -270,8 +273,69 @@ bool handle_replica(std::string msg) {
     std::getline(ss, data);
 
     bool updated = false;
+    if(section.find("UPLOAD|") == 0){
+        size_t pos1 = section.find('\n');
+        size_t pos2 = section.find('\n', pos1 + 1);
+    
 
-    if (section == "SERVER_INFO" && category == "CLIENTS") {
+    if (pos1 != std::string::npos) {
+        std::string filepath = section.substr(7, pos1 - 7);
+        std::string ts_str = section.substr(pos1 + 1, pos2 - pos1 - 1);
+        std::string content = section.substr(pos2 + 1);
+
+        std::cout << "[DEBUG] Filename: " << filepath << "\n";
+        std::cout << "[DEBUG] Timestamp: " << ts_str << "\n";
+        std::cout << "[DEBUG] Content length: " << content.size() << "\n";
+
+        std::cout << "[DEBUG] content[0] = " << content[0] << "\n";
+
+        auto ts_remote = std::stoll(ts_str);
+
+        bool salvar = true;
+
+        // Verificar timestamp
+        if (std::filesystem::exists(filepath)) {
+            auto local_ts = std::chrono::duration_cast<std::chrono::seconds>(
+                std::filesystem::last_write_time(filepath).time_since_epoch()).count();
+            salvar = ts_remote >= local_ts;
+
+            std::cout << "[DEBUG] local_ts = " << local_ts << "\n";
+        }
+
+        if (salvar)
+        {
+            std::cout << "[SYNC] Começando a salvar o arquivo no servidor-backup: " << filepath << "\n";
+
+            // Atualizar o arquivo no servidor
+            {
+                std::lock_guard<std::mutex> lock(get_file_mutex(username, filepath));
+
+                std::ofstream file(filepath, std::ios::binary);
+                file << content;
+                file.close();
+
+                // // Atualiza o timestamp
+                // auto new_time = std::filesystem::file_time_type(std::chrono::seconds(ts_remote));
+                // std::filesystem::last_write_time(filepath, new_time);
+
+                // // Converte para time_t
+                // auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                //                 new_time - std::filesystem::file_time_type::clock::now()
+                //                 + std::chrono::system_clock::now());
+
+                // std::time_t cftime = std::chrono::system_clock::to_time_t(sctp);
+
+                // std::cout << "last_write_time: " << std::put_time(std::localtime(&cftime), "%F %T") << "\n";
+            }
+            
+            std::cout << "[SYNC] Arquivo salvo no servidor: " << filepath << "\n";
+                }
+            } else {
+                std::cerr << "[ERRO] Comando UPLOAD mal formatado.\n";
+            }
+        return true;
+    }
+    else if (section == "SERVER_INFO" && category == "CLIENTS") {
         // Inicializa entrada se ainda não existir
         if (info.clients.find(username) == info.clients.end()) {
             info.clients[username] = ClientInfo{};

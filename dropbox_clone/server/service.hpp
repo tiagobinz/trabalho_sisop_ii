@@ -78,7 +78,7 @@ void listen_heartbeat_from_server(int port);
 
 void listen_backup_to_connect(int replication_fd);
 void listen_primary_for_replicas(int replication_fd);
-bool handle_replica(std::string msg);
+bool handle_replica(std::string msg, int replication_fd);
 
 void send_election_id_to_primary(int backup_fd);
 int receive_election_id_from_backup(int backup_socket, const std::string& ip_str);

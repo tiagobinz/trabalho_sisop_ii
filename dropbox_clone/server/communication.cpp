@@ -247,7 +247,13 @@ void handle_client(int client_socket) {
 
                         std::cout << "last_write_time: " << std::put_time(std::localtime(&cftime), "%F %T") << "\n";
                     }
-
+                    {
+                            std::lock_guard<std::mutex> lock(get_file_mutex(username, filename));
+                            for(const auto& backup_socket : backup_sockets) {
+                                send_large_payload(backup_socket, CMD, "UPLOAD|" + filepath + "\n" + ts_str + "\n" + content);
+                            
+                        }
+                    }
                     std::cout << "[SYNC] Arquivo salvo no servidor: " << filename << "\n";
 
                     // Propagação de UPLOAD para outros dispositivos
