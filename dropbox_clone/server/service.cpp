@@ -16,80 +16,6 @@
 #include "communication.hpp"
 #include "election.hpp"
 
-void multicast_primary_info(int multicast_port) {
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-
-    // Permitir reuso de endereço
-    int reuse = 1;
-    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (char*)&reuse, sizeof(reuse));
-
-    sockaddr_in multicast_addr{};
-    multicast_addr.sin_family = AF_INET;
-    multicast_addr.sin_port = htons(multicast_port);
-    multicast_addr.sin_addr.s_addr = inet_addr(MULTICAST_GROUP.c_str());
-
-    std::string message = "PRIMARY:" + info.primary_ip;
-
-    int multicast_count = 0;
-
-    while (multicast_count < MULTICAST_ATTEMPTS) {
-        sendto(sock, message.c_str(), message.size(), 0, (sockaddr*)&multicast_addr, sizeof(multicast_addr));
-        
-        std::cout << "[P] Multicast [" << multicast_count+1 << "] enviado\n";
-        std::this_thread::sleep_for(std::chrono::seconds(MULTICAST_DELAY));
-
-        multicast_count++;
-    }
-    close(sock);
-}
-
-
-std::string listen_for_primary_multicast(int multicast_port) {
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-
-    // Permitir reuso de endereço
-    int reuse = 1;
-    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (char*)&reuse, sizeof(reuse));
-
-    sockaddr_in local_addr{};
-    local_addr.sin_family = AF_INET;
-    local_addr.sin_port = htons(multicast_port);
-    local_addr.sin_addr.s_addr = INADDR_ANY;
-
-    if (bind(sock, (sockaddr*)&local_addr, sizeof(local_addr)) < 0) {
-        std::cerr << "[ERRO] Bind falhou no socket multicast.\n";
-        close(sock);
-        return "";
-    }
-
-    // Entrar no grupo multicast
-    ip_mreq group{};
-    group.imr_multiaddr.s_addr = inet_addr(MULTICAST_GROUP.c_str());
-    group.imr_interface.s_addr = INADDR_ANY;
-
-    if (setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char*)&group, sizeof(group)) < 0) {
-        std::cerr << "[ERRO] Falha ao entrar no grupo multicast.\n";
-        close(sock);
-        return "";
-    }
-
-    char buffer[1024];
-    while (true) {
-        ssize_t received = recv(sock, buffer, sizeof(buffer) - 1, 0);
-        if (received < 0) continue;
-
-        buffer[received] = '\0';
-        std::string msg(buffer);
-        std::cout << "[B] Multicast recebido: " << msg << "\n";
-
-        if (msg.find("PRIMARY:") == 0) {
-            return msg.substr(8); // extrai IP após "PRIMARY:"
-        }
-    }
-    close(sock);
-    return "";
-}
-
 void send_heartbeat_to_backups(int multicast_port) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
 
@@ -252,19 +178,18 @@ void listen_primary_for_replicas(int replication_fd) {
             std::string msg = leftover.substr(0, pos);
             leftover.erase(0, pos + 1);  // Remove a mensagem processada
             if (!msg.empty()) {
-                
-                handle_replica(msg, replication_fd);
+                std::cout << "Réplica recebida: " << msg << "\n";
+                handle_replica(msg);
             }
         }
     }
     close(replication_fd);
 }
 
-bool handle_replica(std::string msg, int backup_socket) {
+bool handle_replica(std::string msg) {
     std::istringstream ss(msg);
     
     std::string section, category, username, data;
-    std::string payload = receive_full_payload(backup_socket);
         
     // Divide por '|'
     std::getline(ss, section, '|');
@@ -273,56 +198,55 @@ bool handle_replica(std::string msg, int backup_socket) {
     std::getline(ss, data);
 
     bool updated = false;
+
     if(section.find("UPLOAD|") == 0){
         size_t pos1 = section.find('\n');
         size_t pos2 = section.find('\n', pos1 + 1);
     
+        if (pos1 != std::string::npos) {
+            std::string filepath = section.substr(7, pos1 - 7);
+            std::string ts_str = section.substr(pos1 + 1, pos2 - pos1 - 1);
+            std::string content = section.substr(pos2 + 1);
 
-    if (pos1 != std::string::npos) {
-        std::string filepath = section.substr(7, pos1 - 7);
-        std::string ts_str = section.substr(pos1 + 1, pos2 - pos1 - 1);
-        std::string content = section.substr(pos2 + 1);
+            std::cout << "[DEBUG] Filename: " << filepath << "\n";
+            std::cout << "[DEBUG] Timestamp: " << ts_str << "\n";
+            std::cout << "[DEBUG] Content length: " << content.size() << "\n";
 
-        std::cout << "[DEBUG] Filename: " << filepath << "\n";
-        std::cout << "[DEBUG] Timestamp: " << ts_str << "\n";
-        std::cout << "[DEBUG] Content length: " << content.size() << "\n";
+            std::cout << "[DEBUG] content[0] = " << content[0] << "\n";
 
-        std::cout << "[DEBUG] content[0] = " << content[0] << "\n";
+            auto ts_remote = std::stoll(ts_str);
 
-        auto ts_remote = std::stoll(ts_str);
+            bool salvar = true;
 
-        bool salvar = true;
+            // Verificar timestamp
+            if (std::filesystem::exists(filepath)) {
+                auto local_ts = std::chrono::duration_cast<std::chrono::seconds>(
+                    std::filesystem::last_write_time(filepath).time_since_epoch()).count();
+                salvar = ts_remote >= local_ts;
 
-        // Verificar timestamp
-        if (std::filesystem::exists(filepath)) {
-            auto local_ts = std::chrono::duration_cast<std::chrono::seconds>(
-                std::filesystem::last_write_time(filepath).time_since_epoch()).count();
-            salvar = ts_remote >= local_ts;
-
-            std::cout << "[DEBUG] local_ts = " << local_ts << "\n";
-        }
-
-        if (salvar)
-        {
-            std::cout << "[SYNC] Começando a salvar o arquivo no servidor-backup: " << filepath << "\n";
-
-            // Atualizar o arquivo no servidor
-            {
-                std::lock_guard<std::mutex> lock(get_file_mutex(username, filepath));
-
-                std::ofstream file(filepath, std::ios::binary);
-                file << content;
-                file.close();
+                std::cout << "[DEBUG] local_ts = " << local_ts << "\n";
             }
-            
-            std::cout << "[SYNC] Arquivo salvo no servidor: " << filepath << "\n";
+
+            if (salvar) {
+                std::cout << "[SYNC] Começando a salvar o arquivo no servidor-backup: " << filepath << "\n";
+
+                // Atualizar o arquivo no servidor
+                {
+                    std::lock_guard<std::mutex> lock(get_file_mutex(username, filepath));
+
+                    std::ofstream file(filepath, std::ios::binary);
+                    file << content;
+                    file.close();
                 }
-            } else {
-                std::cerr << "[ERRO] Comando UPLOAD mal formatado.\n";
+
+                std::cout << "[SYNC] Arquivo salvo no servidor: " << filepath << "\n";
             }
+        } else {
+            std::cerr << "[ERRO] Comando UPLOAD mal formatado.\n";
+        }
         return true;
-    }
-    else if (section == "SERVER_INFO" && category == "CLIENTS") {
+
+    } else if (section == "SERVER_INFO" && category == "CLIENTS") {
         // Inicializa entrada se ainda não existir
         if (info.clients.find(username) == info.clients.end()) {
             info.clients[username] = ClientInfo{};
@@ -591,9 +515,6 @@ bool handle_election(int election_socket, std::function<void()> on_election_end)
 
 void init_primary_services() {
     int server_fd = init_server(CLIENT_PORT, info.type);
-
-    // Cria uma nova thread para realizar alguns Multicasts UDP e avisar aos backups o endereço primário
-    std::thread(multicast_primary_info, MULTICAST_PORT).detach();
 
     // Cria thread para enviar heartbeat constantemente para todos os backups
     std::thread(send_heartbeat_to_backups, HEARTBEAT_PORT).detach();

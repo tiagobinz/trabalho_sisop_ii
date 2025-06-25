@@ -94,16 +94,16 @@ void handle_client(int client_socket) {
     // Extrai o nome do usuário do payload
     std::string username(login_pkt._payload, login_pkt.length);
 
+    std::string client_ip;
     {
         std::lock_guard<std::mutex> lock(socket_mutex);
-
-        std::string client_ip = get_client_ip(client_socket);
+        client_ip = get_client_ip(client_socket);
         info.clients[username].connections.emplace_back(client_socket, client_ip);
+    }
 
         replica_msg = "SERVER_INFO|CLIENTS|" + username + "|CONNECT:" + std::to_string(client_socket) + ":" + client_ip;
         replicate_to_all_backups(replica_msg);
         replica_msg.clear();
-    }
 
     if (info.clients[username].username.empty()) {
         info.clients[username].username = username;
@@ -247,14 +247,13 @@ void handle_client(int client_socket) {
 
                         std::cout << "last_write_time: " << std::put_time(std::localtime(&cftime), "%F %T") << "\n";
                     }
-                    {
-                            std::lock_guard<std::mutex> lock(get_file_mutex(username, filename));
-                            for(const auto& backup_socket : backup_sockets) {
-                                send_large_payload(backup_socket, CMD, "UPLOAD|" + filepath + "\n" + ts_str + "\n" + content);
-                            
-                        }
-                    }
                     std::cout << "[SYNC] Arquivo salvo no servidor: " << filename << "\n";
+
+                    // Replicação do upload file para os backups
+                    for(const auto& sock : backup_sockets) {
+                        send_large_payload(sock, CMD, "UPLOAD|" + filepath + "\n" + ts_str + "\n" + content);
+                        std::cout << "Enviei UPLOAD para socket: " << sock << "\n";
+                    }
 
                     // Propagação de UPLOAD para outros dispositivos
                     std::string notification = "UPLOAD\n" + filename + "\n" + ts_str + "\n" + content;
@@ -447,7 +446,6 @@ void send_large_payload(int socket, uint16_t type, const std::string& payload) {
 }
 
 void replicate_to_all_backups(const std::string& replica_msg) {
-    std::lock_guard<std::mutex> lock(backup_mutex);
     std::string final_msg = replica_msg + "\n";
 
     for (int sock : backup_sockets) {
