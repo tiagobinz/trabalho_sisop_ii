@@ -144,35 +144,52 @@ void send_heartbeat_to_backups(int heartbeat_port) {
 
 
 void listen_heartbeat_from_server(int port) {
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        perror("socket");
+    int server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_sock < 0) {
+        perror("[B] Erro ao criar socket");
         return;
     }
 
-    // Configurar endereço do primário
-    sockaddr_in server_addr{};
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    server_addr.sin_addr.s_addr = inet_addr(info.primary_ip.c_str());
+    // Permitir reuso da porta
+    int reuse = 1;
+    setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
-    std::cout << "[B] Tentando conectar ao primário (" << info.primary_ip << ":" << port << ")...\n";
-    
-    // Tenta conexão com o primário
-    if (connect(sock, (sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        perror("[B] Erro ao conectar com o primário");
-        close(sock);
+    // Endereço local
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(server_sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
+        perror("[B] Erro no bind");
+        close(server_sock);
         return;
     }
 
-    std::cout << "[B] Conectado ao primário. Aguardando heartbeats...\n";
+    if (listen(server_sock, 1) < 0) {
+        perror("[B] Erro no listen");
+        close(server_sock);
+        return;
+    }
+
+    std::cout << "[B] Aguardando conexão do primário para heartbeat...\n";
+
+    sockaddr_in client_addr{};
+    socklen_t client_len = sizeof(client_addr);
+    int client_sock = accept(server_sock, (sockaddr*)&client_addr, &client_len);
+    if (client_sock < 0) {
+        perror("[B] Erro no accept");
+        close(server_sock);
+        return;
+    }
+
+    std::cout << "[B] Conexão de heartbeat estabelecida com primário!\n";
 
     char buffer[1024];
     auto last_heartbeat = std::chrono::steady_clock::now();
 
     while (true) {
-        ssize_t len = recv(sock, buffer, sizeof(buffer) - 1, 0);
-        
+        ssize_t len = recv(client_sock, buffer, sizeof(buffer) - 1, 0);
         if (len > 0) {
             buffer[len] = '\0';
             std::string msg(buffer);
@@ -181,15 +198,11 @@ void listen_heartbeat_from_server(int port) {
                 std::cout << "[B] Heartbeat recebido!\n";
             }
         } else if (len == 0) {
-            // Conexão fechada pelo primário
-            std::cout << "[B] Conexão com primário foi encerrada.\n";
+            std::cout << "[B] Conexão encerrada pelo primário.\n";
             break;
         } else {
-            // recv retornou erro: trata desconexão
-            if (errno != EWOULDBLOCK && errno != EAGAIN) {
-                std::cerr << "[B] Erro ao receber heartbeat. Desconectando...\n";
-                break;
-            }
+            perror("[B] Erro ao receber heartbeat");
+            break;
         }
 
         auto now = std::chrono::steady_clock::now();
@@ -218,7 +231,8 @@ void listen_heartbeat_from_server(int port) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
-    close(sock);
+    close(client_sock);
+    close(server_sock);
 }
 
 void listen_backup_to_connect(int replica_fd) {
