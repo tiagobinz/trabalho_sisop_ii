@@ -94,7 +94,7 @@ bool recv_exact(int socket, void* buffer, size_t length) {
     return true;
 }
 
-std::string get_local_ip() {
+std::string get_local_ip(std::string argv_ip1, std::string argv_ip2) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
 
     // Permitir reuso de endereço
@@ -116,7 +116,12 @@ std::string get_local_ip() {
     inet_ntop(AF_INET, &local_addr.sin_addr, ip_str, sizeof(ip_str));
 
     close(sock);
-    return std::string(ip_str);
+    
+    if (std::string(ip_str) == argv_ip1) {
+        return argv_ip1;
+    } else {
+        return argv_ip2;
+    }
 }
 
 std::string get_client_ip(int client_socket) {

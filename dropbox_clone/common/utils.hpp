@@ -39,7 +39,7 @@ std::string read_file_content(const std::string& filepath);
 std::string join_backups(const std::unordered_map<int, std::string>& backups);
 
 bool recv_exact(int socket, void* buffer, size_t length);
-std::string get_local_ip();
+std::string get_local_ip(std::string argv_ip1, std::string argv_ip2);
 std::string get_client_ip(int client_socket);
 size_t generate_random_election_id();
 int get_port_by_id(int id);

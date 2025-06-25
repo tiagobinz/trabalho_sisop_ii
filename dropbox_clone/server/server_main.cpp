@@ -34,32 +34,41 @@ ServerInfo info;
 
 int main(int argc, char* argv[]) {
 
-    if (argc != 2) {
-        std::cerr << "Uso: ./myServer <type>\n";
+    if (argc != 5) {
+        std::cerr << "Uso: ./myServer <type> <IP1> <IP2> <IP3> \n";
         return 1;
     }
     // Extração dos argumentos
     std::string server_type = argv[1];  // -p (primary), -b (backup)
+    std::string primary_ip = argv[2];
+    std::string backup1_ip = argv[3];
+    std::string backup2_ip = argv[4];
 
     // SERVER PRIMÁRIO
     if (server_type == "-p") {
         std::cout << "[INFO] Iniciando servidor PRIMÁRIO na porta " << CLIENT_PORT << "\n";
         
         info.type = ServerType::PRIMARY;
-        info.primary_ip = info.ip = get_local_ip();
+        info.primary_ip = primary_ip;
+        info.backups.emplace(backup1_ip, 0);
+        info.backups.emplace(backup2_ip, 0);
 
-        init_primary_services();
+        print_server_info();
+
+        //init_primary_services();
 
     // SERVER BACKUP
     } else if (server_type == "-b") {
         std::cout << "[INFO] Iniciando servidor BACKUP na porta " << REPLICA_PORT << "\n";
         
         info.type = ServerType::BACKUP;
-        info.primary_ip = listen_for_primary_multicast(MULTICAST_PORT);
-        info.ip = get_local_ip();
+        info.primary_ip = primary_ip;
+        info.ip = get_local_ip(backup1_ip, backup2_ip);
         info.election_id = generate_random_election_id();
 
-        init_backup_services();
+        print_server_info();
+
+        //init_backup_services();
         
     } else {
         std::cerr << "[ERRO] Tipo de servidor inválido. Use -p para primário ou -b para backup.\n";

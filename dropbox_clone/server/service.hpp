@@ -58,7 +58,7 @@ typedef struct ServerInfo {
     std::string primary_ip;
     std::string ip;
     std::unordered_map<std::string, ClientInfo> clients;
-    std::unordered_map<int, std::string> backups;
+    std::unordered_map<std::string, int> backups;
 
     // dados backups
     int election_id;

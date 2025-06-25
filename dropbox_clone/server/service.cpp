@@ -168,7 +168,7 @@ void listen_heartbeat_from_server(int port) {
 
             if (!info.backups.empty()) {
                 int min_id = std::numeric_limits<int>::max();
-                for (const auto& [id, _] : info.backups) {
+                for (const auto& [_, id] : info.backups) {
                     min_id = std::min(min_id, id);
                 }
             
@@ -209,10 +209,10 @@ void listen_backup_to_connect(int replica_fd) {
 
             register_backup_socket(backup_socket);
             int election_id = receive_election_id_from_backup(backup_socket, ip_str);
-            info.backups[election_id] = std::string(ip_str);
+            //info.backups[election_id] = std::string(ip_str);
 
             std::cout << "[P] Conexão com backup realizada:\n";
-            std::cout << "[INFO] IP: " << info.backups[election_id] << " | election_id: " << election_id << "\n";
+            //std::cout << "[INFO] IP: " << info.backups[election_id] << " | election_id: " << election_id << "\n";
         } else {
             auto now = clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_connection_time).count();
@@ -227,8 +227,8 @@ void listen_backup_to_connect(int replica_fd) {
     }
 
     // Depois que todos os backups se conectaram ao primário, replica a lista dos IPs dos backups para posterior eleição
-    std::string replica_msg = "SERVER_INFO|BACKUPS|" + join_backups(info.backups);
-    replicate_to_all_backups(replica_msg);
+    //std::string replica_msg = "SERVER_INFO|BACKUPS|" + join_backups(info.backups);
+    //replicate_to_all_backups(replica_msg);
 
     close(replica_fd);
 }
@@ -273,6 +273,7 @@ bool handle_replica(std::string msg, int backup_socket) {
     std::getline(ss, data);
 
     bool updated = false;
+
     if(section.find("UPLOAD|") == 0){
         size_t pos1 = section.find('\n');
         size_t pos2 = section.find('\n', pos1 + 1);
@@ -437,9 +438,9 @@ bool handle_replica(std::string msg, int backup_socket) {
 
             try {
                 int id = std::stoi(id_str);
-
+                // PROBLEMA AQUI
                 if(!(id == info.election_id)) {
-                    info.backups[id] = ip;
+                    info.backups[ip] = id;
                     std::cout << "[INFO] Backup ID: " << id << " | IP: " << ip << " adicionado.\n";
                     count++;
                 } else {
@@ -561,17 +562,14 @@ bool handle_election(int election_socket, std::function<void()> on_election_end)
             election_state.election_in_progress = false;
             info.backup_replicas_received = false;
         }
-
+        // PROBLEMA AQUIII
         int new_primary_id = std::stoi(msg.substr(12));
-        info.primary_ip = info.backups[new_primary_id];
+        info.primary_ip = new_primary_id;
         close(election_socket);
 
-        for (auto& [id, ip] : info.backups) {
-            if(id == info.election_id) {
-                info.backups[id].erase();
-            }
-        }
-        std::cout << "[E] *** NOVO PRIMÁRIO ELEITO: ID " << new_primary_id << " | IP: " << info.backups[new_primary_id] << " ***\n\n";
+        //info.backups[info.ip].erase();
+
+        //std::cout << "[E] *** NOVO PRIMÁRIO ELEITO: ID " << new_primary_id << " | IP: " << info.backups[new_primary_id] << " ***\n\n";
         
         on_election_end();
         return true;

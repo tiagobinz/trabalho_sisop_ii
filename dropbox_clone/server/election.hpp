@@ -36,7 +36,7 @@ typedef struct ElectionState {
 extern ElectionState election_state;
 
 
-void start_election(const std::unordered_map<int, std::string>& backups);
-void become_primary(int this_id, const std::unordered_map<int, std::string>& backups);
+void start_election(const std::unordered_map<std::string, int>& backups);
+void become_primary(int this_id, const std::unordered_map<std::string, int>& backups);
 
 #endif

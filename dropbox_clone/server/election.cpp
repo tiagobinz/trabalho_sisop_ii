@@ -13,7 +13,7 @@
 
 ElectionState election_state;
 
-void start_election(const std::unordered_map<int, std::string>& backups) {
+void start_election(const std::unordered_map<std::string, int>& backups) {
 
     { std::lock_guard<std::mutex> lock(election_state.election_mutex);
         election_state.election_in_progress = true;
@@ -27,7 +27,7 @@ void start_election(const std::unordered_map<int, std::string>& backups) {
     bool send_to_someone = false;
 
     // Envia ELECTION para todos com ID maior
-    for (const auto& [backup_id, ip] : info.backups) {
+    for (const auto& [ip, backup_id] : info.backups) {
 
         if ((backup_id > this_id) && (backup_id != this_id)) {
 
@@ -72,7 +72,7 @@ void start_election(const std::unordered_map<int, std::string>& backups) {
         return;
 
     } else {
-
+        
         std::cout << "[E] Aguardando ANSWER...\n";
 
         using clock = std::chrono::steady_clock;
@@ -91,7 +91,7 @@ void start_election(const std::unordered_map<int, std::string>& backups) {
 }
 
 // Função auxiliar para tornar-se primário
-void become_primary(int this_id, const std::unordered_map<int, std::string>& backups) {
+void become_primary(int this_id, const std::unordered_map<std::string, int>& backups) {
 
     { std::lock_guard<std::mutex> lock(election_state.election_mutex);
         info.election_started = false;
@@ -102,7 +102,7 @@ void become_primary(int this_id, const std::unordered_map<int, std::string>& bac
     // Envia COORDINATOR para todos os backups
     std::string coordinator_msg = "COORDINATOR|" + std::to_string(this_id);
     
-    for (const auto& [backup_id, ip] : backups) {
+    for (const auto& [ip, backup_id] : backups) {
         if (backup_id != this_id) {
             int sock = socket(AF_INET, SOCK_STREAM, 0);
             if (sock < 0) continue;
@@ -124,7 +124,7 @@ void become_primary(int this_id, const std::unordered_map<int, std::string>& bac
 
     // Atualiza dados internos
     
-    info.primary_ip = get_local_ip();
+    info.primary_ip = info.ip;
     info.type = ServerType::PRIMARY;
     info.backup_replicas_received = false;
     clear_backup_sockets();
