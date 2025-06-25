@@ -90,68 +90,88 @@ std::string listen_for_primary_multicast(int multicast_port) {
     return "";
 }
 
-void send_heartbeat_to_backups(int multicast_port) {
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+void send_heartbeat_to_backups(int heartbeat_port) {
+    std::unordered_map<std::string, int> sockets;
 
-    // Permitir reuso de endereço
-    int reuse = 1;
-    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (char*)&reuse, sizeof(reuse));
+    // Criar conexão TCP com cada backup
+    for (const auto& [ip, id] : info.backups) {
+        int sock = socket(AF_INET, SOCK_STREAM, 0);
+        if (sock < 0) {
+            std::cerr << "[P] Erro ao criar socket para backup " << ip << "\n";
+            continue;
+        }
 
-    sockaddr_in multicast_addr{};
-    multicast_addr.sin_family = AF_INET;
-    multicast_addr.sin_port = htons(multicast_port);
-    multicast_addr.sin_addr.s_addr = inet_addr(MULTICAST_GROUP.c_str());
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(heartbeat_port);
+        addr.sin_addr.s_addr = inet_addr(ip.c_str());
+
+        if (connect(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
+            std::cerr << "[P] Falha ao conectar ao backup " << ip << "\n";
+            close(sock);
+            continue;
+        }
+
+        sockets[ip] = sock;
+        std::cout << "[P] Conectado ao backup " << ip << "\n";
+    }
 
     std::string heartbeat_msg = "HEARTBEAT";
 
+    // Loop de envio periódico
     while (true) {
-        sendto(sock, heartbeat_msg.c_str(), heartbeat_msg.size(), 0,
-               (sockaddr*)&multicast_addr, sizeof(multicast_addr));
-        std::cout << "[P] Heartbeat enviado aos backups\n";
+        for (auto it = sockets.begin(); it != sockets.end(); ) {
+            const std::string& ip = it->first;
+            int sock = it->second;
+
+            ssize_t sent = send(sock, heartbeat_msg.c_str(), heartbeat_msg.size(), 0);
+            if (sent < 0) {
+                std::cerr << "[P] Falha ao enviar heartbeat para " << ip << ", removendo conexão\n";
+                close(sock);
+                it = sockets.erase(it); // remove o backup com problema
+            } else {
+                std::cout << "[P] Heartbeat enviado para " << ip << "\n";
+                ++it;
+            }
+        }
         std::this_thread::sleep_for(std::chrono::seconds(HEARTBEAT_DELAY));
     }
 
-    close(sock);
+    for (const auto& [ip, sock] : sockets) {
+        close(sock);
+    }
 }
 
+
 void listen_heartbeat_from_server(int port) {
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         perror("socket");
         return;
     }
 
-    // Para socket ser nao-bloqueante
-    fcntl(sock, F_SETFL, O_NONBLOCK);
+    // Configurar endereço do primário
+    sockaddr_in server_addr{};
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    server_addr.sin_addr.s_addr = inet_addr(info.primary_ip.c_str());
 
-    // Permitir reuso de endereço
-    int reuse = 1;
-    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (char*)&reuse, sizeof(reuse));
-
-    sockaddr_in local_addr{};
-    local_addr.sin_family = AF_INET;
-    local_addr.sin_port = htons(port);
-    local_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-
-    if (bind(sock, (sockaddr*)&local_addr, sizeof(local_addr)) < 0) {
-        perror("bind");
+    std::cout << "[B] Tentando conectar ao primário (" << info.primary_ip << ":" << port << ")...\n";
+    
+    // Tenta conexão com o primário
+    if (connect(sock, (sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("[B] Erro ao conectar com o primário");
         close(sock);
         return;
     }
 
-    ip_mreq mreq{};
-    mreq.imr_multiaddr.s_addr = inet_addr(MULTICAST_GROUP.c_str());
-    mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-    setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
+    std::cout << "[B] Conectado ao primário. Aguardando heartbeats...\n";
 
     char buffer[1024];
-    sockaddr_in sender_addr{};
-    socklen_t addr_len = sizeof(sender_addr);
-
     auto last_heartbeat = std::chrono::steady_clock::now();
 
     while (true) {
-        ssize_t len = recvfrom(sock, buffer, sizeof(buffer) - 1, 0, (sockaddr*)&sender_addr, &addr_len);
+        ssize_t len = recv(sock, buffer, sizeof(buffer) - 1, 0);
         
         if (len > 0) {
             buffer[len] = '\0';
@@ -160,29 +180,41 @@ void listen_heartbeat_from_server(int port) {
                 last_heartbeat = std::chrono::steady_clock::now();
                 std::cout << "[B] Heartbeat recebido!\n";
             }
+        } else if (len == 0) {
+            // Conexão fechada pelo primário
+            std::cout << "[B] Conexão com primário foi encerrada.\n";
+            break;
+        } else {
+            // recv retornou erro: trata desconexão
+            if (errno != EWOULDBLOCK && errno != EAGAIN) {
+                std::cerr << "[B] Erro ao receber heartbeat. Desconectando...\n";
+                break;
+            }
         }
 
         auto now = std::chrono::steady_clock::now();
         int elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_heartbeat).count();
         if (elapsed > HEARTBEAT_TIMEOUT) {
+            std::cout << "[B] Heartbeat não recebido há " << elapsed << " segundos.\n";
+            std::cout << "[B] Considerando que o primário falhou.\n";
 
             if (!info.backups.empty()) {
                 int min_id = std::numeric_limits<int>::max();
                 for (const auto& [_, id] : info.backups) {
                     min_id = std::min(min_id, id);
                 }
-            
+
                 if (info.election_id <= min_id) {
-                    std::cout << "[INFO] Primário falhou. Iniciando eleição...\n";
+                    std::cout << "[INFO] Iniciando eleição...\n";
                     start_election(info.backups);
                 }
-                
             } else {
-                std::cout << "[INFO] Primário falhou. Iniciando eleição...\n";
+                std::cout << "[INFO] Iniciando eleição...\n";
                 start_election(info.backups);
             }
             break;
         }
+
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
@@ -588,28 +620,28 @@ bool handle_election(int election_socket, std::function<void()> on_election_end)
 }
 
 void init_primary_services() {
-    int server_fd = init_server(CLIENT_PORT, info.type);
+    //int server_fd = init_server(CLIENT_PORT, info.type);
 
     // Cria uma nova thread para realizar alguns Multicasts UDP e avisar aos backups o endereço primário
-    std::thread(multicast_primary_info, MULTICAST_PORT).detach();
+    //std::thread(multicast_primary_info, MULTICAST_PORT).detach();
 
     // Cria thread para enviar heartbeat constantemente para todos os backups
     std::thread(send_heartbeat_to_backups, HEARTBEAT_PORT).detach();
 
     // Cria thread para guardar metados dos backups
-    int replica_fd = init_server(REPLICA_PORT, info.type);
-    std::thread(listen_backup_to_connect, replica_fd).detach();
+    //int replica_fd = init_server(REPLICA_PORT, info.type);
+    //std::thread(listen_backup_to_connect, replica_fd).detach();
 
     // Loop principal que aceita conexões de clientes
-    while (true) {
-        // Cria socket para o cliente
-        sockaddr_in client_addr{};
-        socklen_t addrlen = sizeof(client_addr);
-        int client_socket = accept(server_fd, (sockaddr*)&client_addr, &addrlen);
-
-        // Cria uma nova thread para tratar o cliente de forma concorrente
-        std::thread(handle_client, client_socket).detach();
-    }
+    //while (true) {
+    //    // Cria socket para o cliente
+    //    sockaddr_in client_addr{};
+    //    socklen_t addrlen = sizeof(client_addr);
+    //    int client_socket = accept(server_fd, (sockaddr*)&client_addr, &addrlen);
+//
+    //    // Cria uma nova thread para tratar o cliente de forma concorrente
+    //    std::thread(handle_client, client_socket).detach();
+    //}
 }
 
 void init_backup_services() {
@@ -617,13 +649,13 @@ void init_backup_services() {
     std::thread(listen_heartbeat_from_server, HEARTBEAT_PORT).detach();
 
     // Cria uma nova thread para escutar por mensagens de eleição
-    std::thread(election_listener).detach();
-
-    int backup_fd = init_server(REPLICA_PORT, info.type);
-    send_election_id_to_primary(backup_fd);
-
-    // Loop principal que recebe replicas do primário
-    listen_primary_for_replicas(backup_fd);
+    //std::thread(election_listener).detach();
+//
+    //int backup_fd = init_server(REPLICA_PORT, info.type);
+    //send_election_id_to_primary(backup_fd);
+//
+    //// Loop principal que recebe replicas do primário
+    //listen_primary_for_replicas(backup_fd);
 }
 
 void notify_clients_of_new_primary(const ServerInfo& info) {
@@ -675,6 +707,7 @@ void print_server_info() {
     }
 
     std::cout << "IP do servidor primário: " << info.primary_ip << "\n";
+    std::cout << "IP deste servidor: " << info.ip << "\n";
 
     if(info.backups.empty()) {
         std::cout << "Nenhum backup conectado\n";

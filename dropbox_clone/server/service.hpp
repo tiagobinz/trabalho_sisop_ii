@@ -73,7 +73,7 @@ extern ServerInfo info;
 void multicast_primary_info(int multicast_port);
 std::string listen_for_primary_multicast(int multicast_port);
 
-void send_heartbeat_to_backups(int multicast_port);
+void send_heartbeat_to_backups(int heartbeat_port);
 void listen_heartbeat_from_server(int port);
 
 void listen_backup_to_connect(int replication_fd);

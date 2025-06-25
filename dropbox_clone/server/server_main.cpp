@@ -53,9 +53,7 @@ int main(int argc, char* argv[]) {
         info.backups.emplace(backup1_ip, 0);
         info.backups.emplace(backup2_ip, 0);
 
-        print_server_info();
-
-        //init_primary_services();
+        init_primary_services();
 
     // SERVER BACKUP
     } else if (server_type == "-b") {
@@ -66,9 +64,7 @@ int main(int argc, char* argv[]) {
         info.ip = get_local_ip(backup1_ip, backup2_ip);
         info.election_id = generate_random_election_id();
 
-        print_server_info();
-
-        //init_backup_services();
+        init_backup_services();
         
     } else {
         std::cerr << "[ERRO] Tipo de servidor inválido. Use -p para primário ou -b para backup.\n";
