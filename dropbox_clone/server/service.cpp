@@ -620,7 +620,7 @@ bool handle_election(int election_socket, std::function<void()> on_election_end)
 }
 
 void init_primary_services() {
-    //int server_fd = init_server(CLIENT_PORT, info.type);
+    int server_fd = init_server(CLIENT_PORT, info.type);
 
     // Cria uma nova thread para realizar alguns Multicasts UDP e avisar aos backups o endereço primário
     //std::thread(multicast_primary_info, MULTICAST_PORT).detach();
@@ -632,16 +632,16 @@ void init_primary_services() {
     //int replica_fd = init_server(REPLICA_PORT, info.type);
     //std::thread(listen_backup_to_connect, replica_fd).detach();
 
-    // Loop principal que aceita conexões de clientes
-    //while (true) {
-    //    // Cria socket para o cliente
-    //    sockaddr_in client_addr{};
-    //    socklen_t addrlen = sizeof(client_addr);
-    //    int client_socket = accept(server_fd, (sockaddr*)&client_addr, &addrlen);
-//
-    //    // Cria uma nova thread para tratar o cliente de forma concorrente
-    //    std::thread(handle_client, client_socket).detach();
-    //}
+    //Loop principal que aceita conexões de clientes
+    while (true) {
+        // Cria socket para o cliente
+        sockaddr_in client_addr{};
+        socklen_t addrlen = sizeof(client_addr);
+        int client_socket = accept(server_fd, (sockaddr*)&client_addr, &addrlen);
+
+        // Cria uma nova thread para tratar o cliente de forma concorrente
+        std::thread(handle_client, client_socket).detach();
+    }
 }
 
 void init_backup_services() {
@@ -651,11 +651,11 @@ void init_backup_services() {
     // Cria uma nova thread para escutar por mensagens de eleição
     //std::thread(election_listener).detach();
 //
-    //int backup_fd = init_server(REPLICA_PORT, info.type);
+    int backup_fd = init_server(REPLICA_PORT, info.type);
     //send_election_id_to_primary(backup_fd);
 //
-    //// Loop principal que recebe replicas do primário
-    //listen_primary_for_replicas(backup_fd);
+    // Loop principal que recebe replicas do primário
+    listen_primary_for_replicas(backup_fd);
 }
 
 void notify_clients_of_new_primary(const ServerInfo& info) {

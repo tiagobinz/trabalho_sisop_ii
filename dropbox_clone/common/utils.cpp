@@ -94,34 +94,41 @@ bool recv_exact(int socket, void* buffer, size_t length) {
     return true;
 }
 
-std::string get_local_ip(std::string argv_ip1, std::string argv_ip2) {
+std::string get_local_ip() {
+    std::string local_ip = "127.0.0.1";  // fallback
+
+    // Criar um socket UDP
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        perror("[ERRO] socket");
+        return local_ip;
+    }
 
-    // Permitir reuso de endereço
-    int reuse = 1;
-    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (char*)&reuse, sizeof(reuse));
+    sockaddr_in remote_addr{};
+    remote_addr.sin_family = AF_INET;
+    remote_addr.sin_port = htons(80);  // Porta qualquer
+    inet_pton(AF_INET, "8.8.8.8", &remote_addr.sin_addr);  // Google DNS
 
-    sockaddr_in dummy_addr{};
-    dummy_addr.sin_family = AF_INET;
-    dummy_addr.sin_port = htons(80);
-    inet_pton(AF_INET, "8.8.8.8", &dummy_addr.sin_addr);
-
-    connect(sock, (sockaddr*)&dummy_addr, sizeof(dummy_addr));
+    // Não conecta de verdade — só força o sistema a resolver o IP local usado para saída
+    if (connect(sock, (sockaddr*)&remote_addr, sizeof(remote_addr)) < 0) {
+        perror("[ERRO] connect");
+        close(sock);
+        return local_ip;
+    }
 
     sockaddr_in local_addr{};
     socklen_t addr_len = sizeof(local_addr);
-    getsockname(sock, (sockaddr*)&local_addr, &addr_len);
+    if (getsockname(sock, (sockaddr*)&local_addr, &addr_len) == -1) {
+        perror("[ERRO] getsockname");
+        close(sock);
+        return local_ip;
+    }
 
     char ip_str[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &local_addr.sin_addr, ip_str, sizeof(ip_str));
 
     close(sock);
-    
-    if (std::string(ip_str) == argv_ip1) {
-        return argv_ip1;
-    } else {
-        return argv_ip2;
-    }
+    return std::string(ip_str);
 }
 
 std::string get_client_ip(int client_socket) {
