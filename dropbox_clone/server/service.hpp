@@ -28,14 +28,11 @@
  */
 
 #define MULTICAST_GROUP         std::string("239.0.0.1")
-#define MULTICAST_DELAY         3
-#define MULTICAST_ATTEMPTS      5
 #define BACKUP_TIMEOUT          10
 #define HEARTBEAT_DELAY         2
 #define HEARTBEAT_TIMEOUT       6
 
 #define CLIENT_PORT             12345
-#define MULTICAST_PORT          12346
 #define HEARTBEAT_PORT          12347
 #define REPLICA_PORT            12348
 #define ELECTION_PORT           12349

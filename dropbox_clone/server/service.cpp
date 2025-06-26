@@ -163,6 +163,14 @@ void listen_primary_for_replicas(int replication_fd) {
     char buffer[1024];
     std::string leftover;  // Armazena dados incompletos de mensagens anteriores
 
+    //std::thread([replication_fd]() {
+    //    while (true) {
+    //        std::cout << "Esperando Replica de arquivos...\n";
+    //        std::string payload = receive_payload(replication_fd);
+    //        handle_replica(payload);
+    //    }
+    //}).detach();
+
     while (true) {
         ssize_t len = recv(replication_fd, buffer, sizeof(buffer) - 1, 0);
         if (len <= 0) {
@@ -189,62 +197,48 @@ void listen_primary_for_replicas(int replication_fd) {
 bool handle_replica(std::string msg) {
     std::istringstream ss(msg);
     
-    std::string section, category, username, data;
+    std::string section, category, username, data, data2;
         
     // Divide por '|'
     std::getline(ss, section, '|');
     std::getline(ss, category, '|');
     std::getline(ss, username, '|');
-    std::getline(ss, data);
+    std::getline(ss, data, '|');
+    std::getline(ss, data2);
 
     bool updated = false;
 
-    if(section.find("UPLOAD|") == 0){
-        size_t pos1 = section.find('\n');
-        size_t pos2 = section.find('\n', pos1 + 1);
-    
-        if (pos1 != std::string::npos) {
-            std::string filepath = section.substr(7, pos1 - 7);
-            std::string ts_str = section.substr(pos1 + 1, pos2 - pos1 - 1);
-            std::string content = section.substr(pos2 + 1);
+    if(section == "UPLOAD"){
 
-            std::cout << "[DEBUG] Filename: " << filepath << "\n";
-            std::cout << "[DEBUG] Timestamp: " << ts_str << "\n";
-            std::cout << "[DEBUG] Content length: " << content.size() << "\n";
+        std::string user = category;
+        std::string filename = username;
+        std::string ts_str = data;
+        std::string content = data2;
 
-            std::cout << "[DEBUG] content[0] = " << content[0] << "\n";
+        std::string filepath = user + "_sync_dir/" + filename;
+        auto ts_remote = std::stoll(ts_str);
 
-            auto ts_remote = std::stoll(ts_str);
+        bool salvar = true;
 
-            bool salvar = true;
-
-            // Verificar timestamp
-            if (std::filesystem::exists(filepath)) {
-                auto local_ts = std::chrono::duration_cast<std::chrono::seconds>(
-                    std::filesystem::last_write_time(filepath).time_since_epoch()).count();
-                salvar = ts_remote >= local_ts;
-
-                std::cout << "[DEBUG] local_ts = " << local_ts << "\n";
-            }
-
-            if (salvar) {
-                std::cout << "[SYNC] Começando a salvar o arquivo no servidor-backup: " << filepath << "\n";
-
-                // Atualizar o arquivo no servidor
-                {
-                    std::lock_guard<std::mutex> lock(get_file_mutex(username, filepath));
-
-                    std::ofstream file(filepath, std::ios::binary);
-                    file << content;
-                    file.close();
-                }
-
-                std::cout << "[SYNC] Arquivo salvo no servidor: " << filepath << "\n";
-            }
-        } else {
-            std::cerr << "[ERRO] Comando UPLOAD mal formatado.\n";
+        if (std::filesystem::exists(filepath)) {
+            auto local_ts = std::chrono::duration_cast<std::chrono::seconds>(
+                std::filesystem::last_write_time(filepath).time_since_epoch()
+            ).count();
+            salvar = ts_remote >= local_ts;
         }
-        return true;
+
+        if (salvar) {
+            std::lock_guard<std::mutex> lock(get_file_mutex(user, filename));
+            std::ofstream file(filepath, std::ios::binary);
+            file << content;
+            file.close();
+
+            auto new_time = std::filesystem::file_time_type(std::chrono::seconds(ts_remote));
+            std::filesystem::last_write_time(filepath, new_time);
+
+            std::cout << "[REPLICA] Arquivo atualizado: " << filename << " de " << user << "\n";
+            updated = true;
+        }
 
     } else if (section == "SERVER_INFO" && category == "CLIENTS") {
         // Inicializa entrada se ainda não existir

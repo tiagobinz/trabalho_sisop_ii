@@ -30,7 +30,7 @@
 
 std::mutex& get_file_mutex(const std::string& user, const std::string& filename);
 bool recv_exact(int socket, void* buffer, size_t length);
-std::string receive_full_payload(int client_socket);
+std::string receive_payload(int sock);
 void handle_client(int client_socket);
 
 int init_server(int port, ServerType t);

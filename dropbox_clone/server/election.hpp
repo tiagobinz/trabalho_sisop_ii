@@ -22,8 +22,8 @@
 
 #include "service.hpp"
 
-#define ELECTION_ANSWER_TIMEOUT 10000
-#define ELECTION_COORD_TIMEOUT  5000
+#define ELECTION_ANSWER_TIMEOUT 4000
+#define ELECTION_COORD_TIMEOUT  4000
 #define ELECTION_CHECK_DELAY    200
 
 typedef struct ElectionState {

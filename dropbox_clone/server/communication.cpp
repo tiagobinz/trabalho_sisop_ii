@@ -48,7 +48,7 @@ std::mutex& get_file_mutex(const std::string& user, const std::string& filename)
     return user_file_mutex[key];
 }
 
-std::string receive_full_payload(int client_socket) {
+std::string receive_payload(int sock) {
     std::string result;
     uint32_t total_received = 0;
     uint32_t total_expected = 0;
@@ -56,7 +56,7 @@ std::string receive_full_payload(int client_socket) {
 
     while (true) {
         Packet pkt;
-        if (!recv_exact(client_socket, &pkt, sizeof(Packet))) {
+        if (!recv_exact(sock, &pkt, sizeof(Packet))) {
             if (total_received < total_expected) {
                 std::cerr << "[ERRO] Falha ao receber pacote completo (antes de atingir o total esperado).\n";
             } else {
@@ -149,7 +149,7 @@ void handle_client(int client_socket) {
     while (true) {
         
         // Recebe sequências de pacotes do cliente
-        std::string payload = receive_full_payload(client_socket);
+        std::string payload = receive_payload(client_socket);
         if (payload.empty()) break;
     
         // Debug
@@ -251,8 +251,10 @@ void handle_client(int client_socket) {
 
                     // Replicação do upload file para os backups
                     for(const auto& sock : backup_sockets) {
-                        send_large_payload(sock, CMD, "UPLOAD|" + filepath + "\n" + ts_str + "\n" + content);
-                        std::cout << "Enviei UPLOAD para socket: " << sock << "\n";
+                        std::string message = "UPLOAD|" + username + "|" + filename + "|" + ts_str + "|" + content;
+                        Packet file = make_packet(CMD, 0, 0, message.size(), message);
+                        send(sock, &file, sizeof(Packet), 0);
+                        //std::cout << "[DEBUG] Enviei " << message << " para socket: " << sock << "\n";
                     }
 
                     // Propagação de UPLOAD para outros dispositivos
